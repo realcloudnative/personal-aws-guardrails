@@ -78,7 +78,7 @@ Resources:
         - AttachProdRegionLock
         - !Split [",", !Ref ProdRegionLockTargetIds]
         - !Ref AWS::NoValue
-      Tags: &OwnershipTags
+      Tags:
         - Key: project
           Value: cloud-mgmt
         - Key: component
@@ -90,7 +90,7 @@ Resources:
         Statement:
           - Sid: DenyOutsideProdAllowedRegions
             Effect: Deny
-            NotAction: &GlobalServiceActions
+            NotAction:
               - account:*
               - artifact:*
               - aws-external-anthropic:*
@@ -135,13 +135,46 @@ Resources:
         - AttachTestRegionLock
         - !Split [",", !Ref TestRegionLockTargetIds]
         - !Ref AWS::NoValue
-      Tags: *OwnershipTags
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
       Content:
         Version: "2012-10-17"
         Statement:
           - Sid: DenyOutsideTestAllowedRegions
             Effect: Deny
-            NotAction: *GlobalServiceActions
+            NotAction:
+              - account:*
+              - artifact:*
+              - aws-external-anthropic:*
+              - aws-portal:*
+              - billing:*
+              - budgets:*
+              - ce:*
+              - consolidatedbilling:*
+              - cur:*
+              - freetier:*
+              - invoicing:*
+              - payments:*
+              - tax:*
+              - bcm-data-exports:*
+              - cost-optimization-hub:*
+              - purchase-orders:*
+              - cloudfront:*
+              - cloudfront-keyvaluestore:*
+              - health:*
+              - iam:*
+              - organizations:*
+              - route53:*
+              - route53domains:*
+              - sts:*
+              - support:*
+              - supportplans:*
+              - trustedadvisor:*
             Resource: "*"
             Condition:
               StringNotEquals:
@@ -159,7 +192,13 @@ Resources:
         - AttachServiceAllowlist
         - !Split [",", !Ref ServiceAllowlistTargetIds]
         - !Ref AWS::NoValue
-      Tags: *OwnershipTags
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
       Content:
         Version: "2012-10-17"
         Statement:
@@ -298,7 +337,13 @@ Resources:
         - AttachEc2InstanceSize
         - !Split [",", !Ref Ec2InstanceSizeTargetIds]
         - !Ref AWS::NoValue
-      Tags: *OwnershipTags
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
       Content:
         Version: "2012-10-17"
         Statement:
@@ -325,7 +370,13 @@ Resources:
         - AttachBaselineSecurity
         - !Split [",", !Ref BaselineSecurityTargetIds]
         - !Ref AWS::NoValue
-      Tags: *OwnershipTags
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
       Content:
         Version: "2012-10-17"
         Statement:
@@ -386,7 +437,13 @@ Resources:
         - AttachCostControl
         - !Split [",", !Ref CostControlTargetIds]
         - !Ref AWS::NoValue
-      Tags: *OwnershipTags
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
       Content:
         Version: "2012-10-17"
         Statement:
