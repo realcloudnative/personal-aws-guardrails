@@ -135,8 +135,8 @@ for region in "${TARGET_REGIONS[@]}"; do
     --query 'AccountLevel.[HttpTokens,HttpEndpoint]' \
     --output text)" || die "[$region] could not inspect instance metadata defaults"
   read -r imds_tokens_before imds_endpoint_before imds_extra <<< "$imds_before"
-  [[ ( "$imds_tokens_before" == "optional" || "$imds_tokens_before" == "required" ) &&
-     ( "$imds_endpoint_before" == "enabled" || "$imds_endpoint_before" == "disabled" ) &&
+  [[ ( "$imds_tokens_before" == "optional" || "$imds_tokens_before" == "required" || "$imds_tokens_before" == "None" ) &&
+     ( "$imds_endpoint_before" == "enabled" || "$imds_endpoint_before" == "disabled" || "$imds_endpoint_before" == "None" ) &&
      -z "${imds_extra:-}" ]] ||
     die "[$region] unexpected instance metadata defaults '$imds_before'"
   echo "      before: HttpTokens=$imds_tokens_before HttpEndpoint=$imds_endpoint_before"
