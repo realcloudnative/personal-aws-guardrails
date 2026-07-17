@@ -83,6 +83,14 @@ override the Test Region lock, EC2 size control, or an inherited parent policy.
 Before attaching common security to both OUs, test the combined effective policy,
 not each document in isolation.
 
+Count direct attachments before every staged migration. AWS currently permits
+up to 10 SCPs directly attached to a root, OU, or account; verify the current
+Organizations quota rather than relying permanently on this number. Existing
+`FullAWSAccess`, legacy policies, and temporary old/new overlap all count.
+Detached policies do not. This stack's five applicable guardrails per OU leave
+room for staged overlap in the default design, but an existing environment can
+have less headroom.
+
 ## Deploy safely
 
 Prerequisites: AWS CLI v2, SCP policy type enabled, `FullAWSAccess` retained, and
@@ -172,14 +180,28 @@ remain attached and continue denying actions. To retire one safely:
 
 Never delete an attached policy merely to force a CloudFormation operation.
 
-## Local validation
+## Validation: local syntax versus AWS acceptance
 
-No AWS access is needed for static checks:
+Start with offline checks:
 
 ```bash
 cfn-lint cloudformation/scp-guardrails.yaml
 bash -n deploy.sh
 ```
+
+Then, through a management SSO profile, ask CloudFormation's real parser to
+accept the template without creating resources:
+
+```bash
+AWS_PROFILE=home-mgmt-readonly aws cloudformation validate-template \
+  --region us-east-1 \
+  --template-body file://cloudformation/scp-guardrails.yaml
+```
+
+`cfn-lint` cannot catch every CloudFormation service-parser rule. For example,
+standard YAML anchors/aliases can be valid YAML yet rejected by CloudFormation.
+A `CreateChangeSet` parser rejection should create no policy; fix the template,
+run both validations, and retry rather than editing around the wrapper.
 
 The template uses native YAML objects for `AWS::Organizations::Policy.Content`,
 so policy conditions can directly reference CloudFormation parameters without

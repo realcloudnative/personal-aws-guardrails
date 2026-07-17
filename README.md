@@ -63,6 +63,52 @@ Review every component README and template before use. Account IDs, OU IDs,
 principal IDs, email addresses, and profile names are deployment inputs and must
 not be committed.
 
+## Choose your starting point
+
+This repository is designed for adoption, not only for a blank setup. Start at
+the first row that matches reality; do not recreate access or controls merely to
+make the environment resemble an example.
+
+| Current state | Start here | Do not do yet |
+|---|---|---|
+| IdC is enabled, but no management CLI role exists | Create the console-only temporary assignment below | Do not create IAM access keys |
+| `TemporaryBootstrapAdministrator` already works | Run the read-only inventory, then deploy permanent IdC access | Do not attach SCPs or remove bootstrap |
+| Permanent management SSO already works | Use `ManagementReadOnly` for inventory and reconcile existing assignments | Do not create a second temporary administrator |
+| Baselines, SCPs, budgets, or GuardDuty already exist | Use each component's adoption/replacement path | Do not overwrite, adopt, detach, disable, or delete by name alone |
+| These exact CloudFormation stacks already exist | Inspect stack status, parameters, outputs, drift, and live service state before updating | Do not assume source and deployed state still match |
+
+There is intentionally no one-shot installer. Identity, baseline mutation, SCP
+creation, SCP attachment, budget replacement, and quarantine are separate
+operations with separate rollback points.
+
+## Manual and assisted operation
+
+A human remains responsible for authentication and approval. A local automation
+assistant can reduce transcription errors and perform verification safely when
+given only:
+
+- an SSO profile name;
+- the exact allowed operation (for example, “read-only inventory” or “deploy the
+  detached SCP stack”); and
+- explicit approval immediately before security-sensitive mutations or deletion.
+
+Never send an assistant access keys, SSO tokens, browser cookies, cache files, or
+raw credentials. Prefer this operating loop for both manual and assisted use:
+
+1. **Identify** the account, Region, caller ARN, existing owner, and intended
+   resource name.
+2. **Inspect** current service state with read-only APIs.
+3. **Preview** what will be created, updated, attached, disabled, or deleted.
+4. **Mutate one boundary at a time.** Stack creation and policy attachment are
+   deliberately different steps.
+5. **Verify through the service API**, not only a successful shell exit or
+   CloudFormation status.
+6. **Stop on mismatch.** Preserve partial progress, fix the assumption or
+   parser issue, and rerun the idempotent wrapper instead of improvising.
+
+Keep a local ignored record of discovered identifiers and decisions. Public
+issues, commits, examples, and logs must use placeholders.
+
 ## Safety prerequisites
 
 1. An existing AWS Organization with all features and SCP policy type enabled.
@@ -179,54 +225,69 @@ attachments, and resolve drift or naming collisions before creating resources.
 Never commit account IDs, principal IDs, emails, CLI cache files, or inventory
 output.
 
-## Deployment sequence
+## Operational rollout and checkpoints
 
-Order matters, particularly around Identity Center bootstrap and S3 Block
-Public Access.
+Order matters, particularly around Identity Center bootstrap and S3 Block Public
+Access. Treat each numbered item as a resumable phase; record its postconditions
+before moving on.
 
-1. **Create temporary access in the console.** Sign in to the management
-   account as the MFA-protected console-only break-glass IAM user, create the
-   one-hour `TemporaryBootstrapAdministrator` permission set, and assign it only
-   to the management IdC user in the management account. Do not create an access
-   key or deploy CloudFormation.
-2. **Switch permanently to SSO for CLI work.** Configure
-   `home-mgmt-bootstrap`, run `aws sso login`, unset ambient credential
-   variables, and verify the management account and temporary SSO role with STS.
-3. **Reconcile through SSO.** Use the temporary profile to perform the complete
-   read-only organization/IdC/policy inventory above. Resolve identity-stack
-   name collisions before proceeding.
-4. **Deploy permanent access through SSO.** Run
-   `idc-permission-sets/deploy.sh`; it rejects non-SSO callers and checks the
-   management account, organization, instance, accounts, and distinct users.
-5. **Verify and retire temporary access.** Configure and sign in to permanent
-   profiles for all assigned roles. After replacement profiles work, remove the
-   legacy group-derived broad Billing assignment in management and the
-   overlapping Administrator/ViewOnly assignments in Test/Prod. Run
-   `retire-bootstrap.sh`, which verifies permanent profiles, allows only
-   `BillingReadOnly` for the workload user in management, and confirms that the
-   temporary permission set is provisioned only to management before deleting
-   it through `IdentityCenterAdmin`. Keep the IAM break-glass principal disabled
-   or otherwise controlled according to your recovery procedure; do not delete
-   an untested recovery path casually.
-6. **Apply account baselines in every account.** Do this before attaching the
-   baseline-security SCP: that policy denies `s3:PutAccountPublicAccessBlock`, so S3 account Block
-   Public Access must already be enabled. Use `LandingZoneAdmin` for management
-   and `WorkloadAdmin` for Test/Prod.
-7. **Deploy and attach SCP guardrails.** Use `LandingZoneAdmin`. Start with
-   narrow targets, test in Test, and move policies to the intended OUs only after
-   reconciliation. Keep management at the organization root and remember SCPs
-   do not constrain it.
-8. **Deploy the managed Safety Net.** Use `LandingZoneAdmin` to create the new
-   $20 organization-wide budget. Verify its subscriber and four notifications,
-   then separately delete the legacy unmanaged `Safety Net` only with explicit
-   authorization.
-9. **Deploy SCP-only cost quarantine after compatibility review.** The default
-   creates Test forecasted-$50 and Prod actual-$50 automatic Budget actions that
-   attach the generic containment SCP. Release is manual. Keep
-   `ENABLE_REMEDIATION=false`; no Test role, SNS, Lambda, or Step Functions
-   resources are deployed.
-10. **Optionally deploy scheduled switching** from the appropriate workload SSO
-   profile.
+1. **Establish one temporary management SSO path when needed.** Create the
+   console-only assignment, configure `home-mgmt-bootstrap`, unset ambient IAM
+   credentials, and verify the management account and exact temporary role with
+   STS. If permanent management SSO already works, skip temporary creation.
+   **Stop** if the assignment exists with unexpected principals/accounts or the
+   caller does not match management.
+2. **Inventory before creating.** Reconcile accounts, OUs, IdC users and
+   assignments, SCP contents/targets, active stack names, budgets, GuardDuty
+   detectors, and CloudTrail trails. **Continue only when** intended IDs and
+   ownership are recorded locally and naming collisions are understood.
+3. **Deploy permanent identity access.** Run
+   `idc-permission-sets/deploy.sh` through temporary bootstrap on first creation
+   or `IdentityCenterAdmin` on updates. **Continue only when** the stack is
+   healthy and every permission set has the expected managed/inline policies
+   and direct assignment.
+4. **Configure two local SSO sessions, not one wizard per profile.** Reuse
+   `home-mgmt` for all management profiles and `home-workload` for Billing/Test/
+   Prod profiles. Authenticate once per IdC user and verify every STS account and
+   role. Remove overlapping legacy assignments only after replacement profiles
+   work; then run `retire-bootstrap.sh`.
+5. **Apply baselines account by account.** Run management through
+   `LandingZoneAdmin` and member accounts through `WorkloadAdmin`. The wrapper
+   may make valid partial progress before an error; fix the cause and rerun it
+   idempotently. **Do not attach baseline security** until all four S3 account
+   Block Public Access settings are verified in that member account.
+6. **Create SCPs detached.** Run `scp-guardrails/deploy.sh` with no targets.
+   A healthy stack and six policies with zero targets changes no effective
+   workload permissions. Static `cfn-lint` is not the AWS parser; a change-set
+   rejection should produce no resources, and the template must be fixed and
+   validated rather than bypassed.
+7. **Attach SCPs incrementally.** Start in Test, one policy at a time. After
+   each attachment, exercise normal read/deploy/update/stop/delete and recovery
+   paths through the workload profile. For Prod, attach and prove a replacement
+   before detaching its legacy equivalent; overlapping denies intersect. Keep
+   management outside workload OUs as the recovery path.
+8. **Replace budgets without an alert gap.** Create the managed $20 Safety Net,
+   verify its live limit, notifications, and subscriber, allow temporary
+   coexistence, then delete the old unmanaged budget as a separate authorized
+   operation.
+9. **Choose GuardDuty scope deliberately.** This home default uses one detector
+   per account, not every SCP-allowed Region. Inspect ownership first; disable
+   rather than silently delete an unmanaged detector, then deploy and verify the
+   selected Region. A finding's detector Region is different from the remote
+   IP's geographic location.
+10. **Deploy quarantine only after workload compatibility review.** The default
+    creates automatic Test forecasted-$50 and Prod actual-$50 SCP actions with
+    manual release. Keep `ENABLE_REMEDIATION=false`; no Test role, SNS, Lambda,
+    logs, or Step Functions resources should exist.
+11. **Optionally deploy scheduled switching** from the appropriate workload SSO
+    profile after its independent review.
+
+Management-only phases can be paused ahead of workload login: permanent identity
+creation, the management baseline, detached SCP creation, the managed budget,
+and management GuardDuty can be completed and verified independently. Do not
+retire bootstrap, remove legacy workload access, mutate member baselines, attach
+workload SCPs, or arm quarantine until the relevant workload profiles have been
+tested.
 
 Every CloudFormation deployment in this workflow uses an SSO profile. The IAM
 break-glass principal is never used to run CloudFormation.

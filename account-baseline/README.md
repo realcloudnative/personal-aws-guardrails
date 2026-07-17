@@ -70,6 +70,12 @@ AWS_PROFILE="home-test-admin" \
 
 The scripts inspect each setting before mutation, skip compliant settings, verify every postcondition, and return nonzero if inspection, mutation, or verification fails. Re-running against a healthy managed baseline is safe.
 
+A failure can occur after valid earlier mutations—for example, one Region may be
+compliant before a later Region returns an unexpected service response. Do not
+manually undo successful safety settings. Read the last completed postcondition,
+fix the parser/permission/service issue, and rerun the same command; the wrapper
+is intentionally inspect-before-mutate and idempotent.
+
 ## GuardDuty single-Region policy
 
 This home setup deliberately avoids cross-Region aggregation and multiple notification paths:
@@ -90,13 +96,19 @@ In the selected Region, the wrapper distinguishes these states:
 3. **A detector exists without the named stack:** fail rather than silently adopting, replacing, or deleting it.
 4. **The named stack and GuardDuty inventory disagree:** fail as drift and require manual reconciliation.
 
-## Reconcile the existing Singapore management detector
+## Move an existing detector to the selected Region
 
-The existing management detector in `ap-southeast-1` must be reviewed before creating the intended `us-east-1` detector. First inspect it through `home-mgmt-landing`; these commands do not mutate it:
+A GuardDuty finding has both an AWS detector **Region** and, for some finding
+types, a remote IP geolocation. A country/city shown for an attacker is not
+proof that the detector runs there. Check the finding's AWS Region and call
+`list-detectors` in that Region.
+
+If an enabled detector already exists outside the selected home Region, inspect
+ownership before creating another:
 
 ```bash
-export AWS_PROFILE=home-mgmt-landing
-export OLD_GD_REGION=ap-southeast-1
+export AWS_PROFILE=<account-profile>
+export OLD_GD_REGION=<existing-detector-region>
 
 aws guardduty list-detectors --region "$OLD_GD_REGION"
 aws cloudformation describe-stacks \
@@ -104,10 +116,12 @@ aws cloudformation describe-stacks \
   --region "$OLD_GD_REGION"
 ```
 
-If `describe-stacks` says the stack does not exist, the detector is unmanaged by this repository. Record its detector ID locally, review/export any findings you care about, and explicitly disable it:
+If the named stack does not exist, the detector is unmanaged by this repository.
+Record its detector ID locally, review/export findings you care about, then
+explicitly disable it before deploying the replacement:
 
 ```bash
-DETECTOR_ID=<existing-singapore-detector-id>
+DETECTOR_ID=<existing-detector-id>
 aws guardduty get-detector \
   --detector-id "$DETECTOR_ID" \
   --region "$OLD_GD_REGION"
@@ -122,17 +136,21 @@ aws guardduty get-detector \
   --output text
 ```
 
-Require the final output to be `DISABLED`. Disabling is preferred to automatic deletion because it is reversible and leaves historical state available according to GuardDuty retention behavior.
+Require `DISABLED`. Disabling is reversible and preserves the detector's
+historical state according to GuardDuty retention behavior. The deployment
+wrapper allows a disabled detector in a non-selected Region but rejects an
+enabled one, preventing an accidental multi-Region rollout.
 
-If the Singapore detector is owned by an existing CloudFormation stack, do **not** disable it behind CloudFormation's back. Review that stack and its findings, then deliberately delete or modify the owning stack before deploying the new Region. Stack deletion can remove the detector and is destructive, so it is never automated here.
-
-After Singapore is disabled or its owning stack is reconciled, run the management deployment example above. Its preflight will still refuse if any other inspected Region has an enabled detector.
+If an existing CloudFormation stack owns the detector, do **not** disable it
+behind CloudFormation's back. Review and update/delete the owning stack through
+its normal lifecycle. Stack deletion can remove the detector and is a separate
+destructive decision.
 
 ## Existing-resource limitations
 
 - Account-level S3 BPA affects the account immediately and overrides less restrictive bucket settings. The script does not alter bucket-level BPA policies.
 - Enabling EBS encryption by default affects subsequently created EBS volumes and snapshot copies; it does not encrypt existing volumes.
-- EC2 account-level metadata defaults apply when launch settings inherit them; they do not rewrite existing instance metadata options. A deliberately disabled account-default IMDS endpoint remains disabled because the script changes only `HttpTokens` and verifies `HttpEndpoint` is unchanged.
+- EC2 account-level metadata defaults apply when launch settings inherit them; they do not rewrite existing instance metadata options. AWS can return `None`/unset for an account with no explicit default; the wrapper treats that as valid and sets only `HttpTokens=required`. A disabled or unset `HttpEndpoint` remains unchanged and is verified after mutation.
 - A GuardDuty stack cannot be created while an unmanaged detector already exists in its selected account/Region.
 - Single-Region GuardDuty does not monitor regional resource activity in other Regions. The reduced coverage is an explicit home-setup trade-off.
 

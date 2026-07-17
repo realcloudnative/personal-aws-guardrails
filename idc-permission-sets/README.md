@@ -178,11 +178,31 @@ SSO session: home-workload   (workload IdC user)
   home-prod-admin       → Prod / WorkloadAdmin  # only if assigned
 ```
 
-Create each profile interactively with `aws configure sso --profile <name>`. For
-the three permanent management profiles, select the existing `home-mgmt` SSO
-session. For the first workload profile, create `home-workload` with the same
-portal URL and IdC Region but authenticate as the distinct workload user. Use it
-for `home-billing-readonly`, then reuse it for Test and Prod.
+Do **not** run the interactive wizard once per profile. The wizard is useful for
+creating the first session, but the remaining entries are deterministic local
+configuration.
+
+1. If `home-mgmt-bootstrap` already works, its `[sso-session home-mgmt]` block
+   is the management session. Keep it.
+2. Back up the local file before editing:
+
+   ```bash
+   cp ~/.aws/config ~/.aws/config.backup-$(date +%Y%m%d-%H%M%S)
+   chmod 600 ~/.aws/config
+   ```
+
+3. Add the permanent management profile blocks below, all referencing
+   `sso_session = home-mgmt`.
+4. Add one distinct `[sso-session home-workload]` block using the same portal URL
+   and IdC Region, then add Billing/Test/Prod profiles that reference it. Never
+   put tokens or credentials in this file.
+5. Run `aws configure list-profiles` and inspect the file before logging in.
+
+If starting without any local SSO configuration, run `aws configure sso` once
+for the first profile of each IdC user, then add the other account/role profiles
+manually. A local automation assistant may make this edit after receiving the
+profile mappings, but it must preserve a backup and must never receive or print
+portal tokens/cache contents.
 
 The resulting `~/.aws/config` should have this shape. Replace placeholders only
 in your local file; never copy real account IDs or portal URLs into this
@@ -255,21 +275,31 @@ not role credentials. Short-lived tokens remain in the AWS CLI's local SSO
 cache; never commit or share `~/.aws`, cache contents, or command output carrying
 credentials.
 
-A browser may reuse an existing access-portal login. Before creating or logging
-in to `home-workload` for the first time, sign out of the management user's web
-portal session or use a separate browser profile/private session, and verify the
-portal shows the workload user. The AWS CLI cannot turn one IdC user's token
-into the other user's assignments.
+Separate `sso-session` names isolate the two local CLI token caches, but they do
+not choose the browser identity. The AWS CLI cannot turn one IdC user's token
+into the other user's assignments; authenticate each session as the intended
+user.
 
-One login per SSO session is sufficient:
+One login per SSO session is sufficient. Profiles added to an already logged-in
+`home-mgmt` session may work immediately; otherwise authenticate once:
 
 ```bash
 # Authenticates all profiles that use home-mgmt.
 aws sso login --profile home-mgmt-readonly
 
-# Authenticate separately as the workload IdC user; this covers Billing, Test, and Prod.
-aws sso login --profile home-billing-readonly
+# Authenticate once as the distinct workload IdC user. Device-code mode makes
+# it easy to open the URL in a private browser and avoid reusing the management
+# user's web session. This covers Billing, Test, and Prod.
+aws sso login \
+  --profile home-billing-readonly \
+  --use-device-code \
+  --no-browser
 ```
+
+If the installed AWS CLI does not support those device-code flags, sign out of
+the access portal in the browser (or use a separate browser profile) and run the
+ordinary `aws sso login --profile home-billing-readonly`. Always verify which
+IdC user the browser shows before approving the login.
 
 Do not use the unqualified `default` profile for this repository. Select a
 profile explicitly with `AWS_PROFILE` or `--profile`, then verify every
@@ -333,8 +363,10 @@ temporary permission set is provisioned only to the management account and has
 only the expected user assignment, waits for asynchronous assignment deletion,
 and then deletes the temporary permission set through `IdentityCenterAdmin`.
 Already-issued temporary role credentials can remain valid until their configured
-session expires. This rollout explicitly accepts the reconciled four-hour
-temporary duration and removes it promptly afterward.
+session expires. If reconciliation finds a duration other than the recommended
+one hour, correct it or explicitly accept the temporary exposure before
+continuing; in either case, retire bootstrap promptly after permanent access is
+proven.
 
 Keep the IAM user as a controlled console-only recovery path if that matches the
 recovery policy, but verify in the IAM console that it has **zero access keys**.

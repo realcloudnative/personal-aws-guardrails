@@ -34,30 +34,45 @@ The wrapper verifies the SSO role and Organizations management account before
 CloudFormation runs. Budgets uses the `us-east-1` control-plane endpoint by
 default even though the budget monitors consolidated global spend.
 
-## Replace the existing unmanaged Safety Net without an alert gap
+## Adopt or replace an existing budget without an alert gap
 
-Reconciliation found an unmanaged budget named `Safety Net` with the approved
-$20 limit and the same 25/50/75 actual plus 50 forecasted percentages.
-CloudFormation cannot silently adopt it. Migration is deliberately staged:
-
-1. Deploy `home-budget-alarms`, creating `home-overall-monthly` first.
-2. Verify its $20 limit, all four notifications, and intended email subscriber.
-3. Leave both budgets active long enough to confirm the managed alert path.
-4. Separately delete `Safety Net` only after explicit authorization.
-
-The deployment wrapper never deletes the old budget. An authorized management
-operator can perform the final removal after verification:
+Do not infer ownership from a friendly name. Inventory the existing budget's
+limit, notifications, and subscribers first:
 
 ```bash
 MANAGEMENT_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-aws budgets delete-budget \
+aws budgets describe-budgets --account-id "$MANAGEMENT_ACCOUNT_ID" --region us-east-1
+aws budgets describe-notifications-for-budget \
   --account-id "$MANAGEMENT_ACCOUNT_ID" \
-  --budget-name "Safety Net" \
+  --budget-name <existing-budget-name> \
   --region us-east-1
 ```
 
-Deletion is irreversible as a budget resource and is intentionally outside the
-CloudFormation deployment.
+Decide explicitly whether differences from this repository's $20 and
+25/50/75-actual plus 50-forecasted model should be corrected or preserved.
+CloudFormation does not silently adopt an arbitrary existing budget. The safest
+generic replacement is staged:
+
+1. Deploy `home-budget-alarms`, creating `home-overall-monthly` first.
+2. Query the live Budgets API to verify its limit, all four notifications, and
+   intended subscriber; do not rely only on stack outputs.
+3. Allow temporary coexistence long enough to prove the managed path and avoid
+   an alert gap.
+4. Delete the exact legacy budget only as a separately approved operation.
+
+The deployment wrapper never deletes an old budget. After verification, an
+authorized management operator can remove the chosen legacy name:
+
+```bash
+aws budgets delete-budget \
+  --account-id "$MANAGEMENT_ACCOUNT_ID" \
+  --budget-name <exact-legacy-budget-name> \
+  --region us-east-1
+```
+
+Deletion is irreversible for that budget resource. Immediately verify that the
+legacy name is absent and `home-overall-monthly` still has its expected limit,
+notifications, and subscriber.
 
 ## Local validation
 
