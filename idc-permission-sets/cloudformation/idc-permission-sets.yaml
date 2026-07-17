@@ -1,220 +1,481 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  IAM Identity Center permission sets for a single management-account operator.
-  One human / one IdC user, two deliberately-assumed hats:
-    * CloudOps  — everyday control-plane work (Organizations/SCPs, Budgets,
-                  CloudFormation, account baseline). Cannot run workloads,
-                  cannot administer Identity Center.
-    * IdentityAdmin — rare, powerful. Administers IdC permission sets and
-                  assignments (incl. for dev/prod). Effectively org-admin;
-                  assume it only when changing who can access what.
-  Both are assigned ONLY to the management account, so this login never has
-  direct access to dev/prod. Deploy in the MANAGEMENT account, in the region
-  where your Identity Center instance is homed.
+  IAM Identity Center permission sets for separate management and workload
+  users. ManagementReadOnly, LandingZoneAdmin, and IdentityCenterAdmin are
+  assigned only to the management account and management user. BillingReadOnly
+  gives the distinct workload user billing visibility in management; WorkloadAdmin
+  is assigned only to Test and, when supplied, Prod. Deploy in the Organizations
+  management account and Identity Center home Region through an SSO profile.
 
 Parameters:
   IdentityCenterInstanceArn:
     Type: String
-    AllowedPattern: "^arn:aws:sso:::instance/ssoins-[0-9a-f]+$"
-    Description: "IdC instance ARN. Find with: aws sso-admin list-instances"
+    AllowedPattern: "^arn:aws:sso:::instance/ssoins-[0-9A-Za-z-]+$"
+    Description: IAM Identity Center instance ARN.
 
   ManagementAccountId:
     Type: String
     AllowedPattern: "^[0-9]{12}$"
-    Description: 12-digit management account id (the only assignment target).
+    ConstraintDescription: Must be a 12-digit AWS account ID.
 
-  PrincipalId:
+  TestAccountId:
     Type: String
-    Description: "IdC user (or group) id. Find with: aws identitystore list-users --identity-store-id <id>"
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: Must be a 12-digit AWS account ID.
 
-  PrincipalType:
+  ProdAccountId:
     Type: String
-    AllowedValues: ["USER", "GROUP"]
-    Default: USER
-    Description: Whether PrincipalId is a user or a group.
+    Default: ""
+    AllowedPattern: "^$|^[0-9]{12}$"
+    ConstraintDescription: Leave empty or provide a 12-digit AWS account ID.
 
-  CloudOpsSessionDuration:
+  ManagementPrincipalId:
+    Type: String
+    MinLength: 1
+    Description: Identity Store user ID for the management principal.
+
+  WorkloadPrincipalId:
+    Type: String
+    MinLength: 1
+    Description: Identity Store user ID for the distinct workload principal.
+
+  ManagementReadOnlySessionDuration:
     Type: String
     Default: PT4H
-    Description: ISO-8601 session length for the everyday CloudOps hat.
+    AllowedPattern: "^PT([1-9]|1[0-2])H$"
 
-  IdentityAdminSessionDuration:
+  LandingZoneAdminSessionDuration:
+    Type: String
+    Default: PT2H
+    AllowedPattern: "^PT([1-9]|1[0-2])H$"
+
+  IdentityCenterAdminSessionDuration:
     Type: String
     Default: PT1H
-    Description: ISO-8601 session length for the powerful IdentityAdmin hat (kept short on purpose).
+    AllowedPattern: "^PT([1-9]|1[0-2])H$"
+
+  BillingReadOnlySessionDuration:
+    Type: String
+    Default: PT4H
+    AllowedPattern: "^PT([1-9]|1[0-2])H$"
+
+  WorkloadAdminSessionDuration:
+    Type: String
+    Default: PT4H
+    AllowedPattern: "^PT([1-9]|1[0-2])H$"
+
+
+Rules:
+  DistinctPrincipals:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ManagementPrincipalId, !Ref WorkloadPrincipalId]]
+        AssertDescription: Management and workload principal IDs must be different.
+  DistinctRequiredAccounts:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ManagementAccountId, !Ref TestAccountId]]
+        AssertDescription: Management and Test account IDs must be different.
+  DistinctOptionalProdAccount:
+    RuleCondition: !Not [!Equals [!Ref ProdAccountId, ""]]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref ProdAccountId, !Ref ManagementAccountId]]
+          - !Not [!Equals [!Ref ProdAccountId, !Ref TestAccountId]]
+        AssertDescription: Prod must differ from the management and Test accounts.
+Conditions:
+  AssignProd: !Not [!Equals [!Ref ProdAccountId, ""]]
 
 Resources:
-  CloudOpsPermissionSet:
+  CostQuarantineRoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: home-cost-quarantine-role-boundary
+      Description: Maximum permissions for the fixed management-account cost-quarantine roles.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: QuarantineOrchestrationCeiling
+            Effect: Allow
+            Action:
+              - organizations:AttachPolicy
+              - organizations:DetachPolicy
+              - organizations:DescribePolicy
+              - organizations:ListPoliciesForTarget
+              - organizations:ListTargetsForPolicy
+              - sts:AssumeRole
+              - lambda:InvokeFunction
+              - states:StartExecution
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:CreateLogDelivery
+              - logs:GetLogDelivery
+              - logs:UpdateLogDelivery
+              - logs:DeleteLogDelivery
+              - logs:ListLogDeliveries
+              - logs:PutResourcePolicy
+              - logs:DescribeResourcePolicies
+              - logs:DescribeLogGroups
+            Resource: "*"
+
+  ManagementReadOnlyPermissionSet:
     Type: AWS::SSO::PermissionSet
     Properties:
-      Name: CloudOpsManagement
-      Description: Everyday management control plane. No workloads, no Identity Center administration.
+      Name: ManagementReadOnly
+      Description: Read-only inspection of the management account.
       InstanceArn: !Ref IdentityCenterInstanceArn
-      SessionDuration: !Ref CloudOpsSessionDuration
+      SessionDuration: !Ref ManagementReadOnlySessionDuration
       ManagedPolicies:
         - arn:aws:iam::aws:policy/ReadOnlyAccess
-      InlinePolicy: |-
+
+  LandingZoneAdminPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: LandingZoneAdmin
+      Description: Landing-zone control plane with IAM lifecycle access limited to fixed, bounded quarantine roles.
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      SessionDuration: !Ref LandingZoneAdminSessionDuration
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      InlinePolicy: !Sub |-
         {
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "ManageOrganizationsAndScps",
+              "Sid": "ManageOrganizationStructureAndPolicies",
               "Effect": "Allow",
               "Action": [
-                "organizations:Describe*", "organizations:List*",
-                "organizations:CreatePolicy", "organizations:UpdatePolicy", "organizations:DeletePolicy",
-                "organizations:AttachPolicy", "organizations:DetachPolicy",
-                "organizations:EnablePolicyType", "organizations:DisablePolicyType",
-                "organizations:TagResource", "organizations:UntagResource"
+                "organizations:Describe*",
+                "organizations:List*",
+                "organizations:CreateOrganizationalUnit",
+                "organizations:UpdateOrganizationalUnit",
+                "organizations:DeleteOrganizationalUnit",
+                "organizations:MoveAccount",
+                "organizations:CreatePolicy",
+                "organizations:UpdatePolicy",
+                "organizations:DeletePolicy",
+                "organizations:AttachPolicy",
+                "organizations:DetachPolicy",
+                "organizations:EnablePolicyType",
+                "organizations:DisablePolicyType",
+                "organizations:TagResource",
+                "organizations:UntagResource"
               ],
               "Resource": "*"
             },
             {
-              "Sid": "ManageBudgetsAndCost",
+              "Sid": "ManageBudgets",
               "Effect": "Allow",
-              "Action": ["budgets:*", "ce:Get*", "ce:List*", "ce:Describe*", "account:Get*", "account:List*"],
+              "Action": "budgets:*",
               "Resource": "*"
             },
             {
-              "Sid": "ManageCloudFormation",
+              "Sid": "ManageLandingZoneStacks",
               "Effect": "Allow",
               "Action": "cloudformation:*",
               "Resource": "*"
             },
             {
-              "Sid": "ManageSetupIamRoles",
+              "Sid": "ManageQuarantineMessaging",
               "Effect": "Allow",
               "Action": [
-                "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:UntagRole",
-                "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies",
-                "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
-                "iam:UpdateAssumeRolePolicy", "iam:CreateServiceLinkedRole"
+                "sns:CreateTopic", "sns:DeleteTopic", "sns:SetTopicAttributes",
+                "sns:AddPermission", "sns:RemovePermission", "sns:Subscribe", "sns:Unsubscribe",
+                "sns:TagResource", "sns:UntagResource"
               ],
-              "Resource": "*"
+              "Resource": [
+                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:home-cost-quarantine-*",
+                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:home-cost-quarantine-*:*"
+              ]
             },
             {
-              "Sid": "PassRolesOnlyToSetupServices",
+              "Sid": "ManageQuarantineFunctions",
               "Effect": "Allow",
-              "Action": "iam:PassRole",
-              "Resource": "*",
-              "Condition": {
-                "StringEquals": { "iam:PassedToService": ["budgets.amazonaws.com", "cloudformation.amazonaws.com"] }
-              }
+              "Action": [
+                "lambda:CreateFunction", "lambda:DeleteFunction",
+                "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration",
+                "lambda:AddPermission", "lambda:RemovePermission",
+                "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency",
+                "lambda:TagResource", "lambda:UntagResource"
+              ],
+              "Resource": "arn:${AWS::Partition}:lambda:*:${ManagementAccountId}:function:home-cost-quarantine-*"
+            },
+            {
+              "Sid": "ManageQuarantineStateMachine",
+              "Effect": "Allow",
+              "Action": [
+                "states:CreateStateMachine", "states:UpdateStateMachine", "states:DeleteStateMachine",
+                "states:TagResource", "states:UntagResource"
+              ],
+              "Resource": "arn:${AWS::Partition}:states:*:${ManagementAccountId}:stateMachine:home-cost-quarantine-*"
+            },
+            {
+              "Sid": "ManageQuarantineLogs",
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy",
+                "logs:DeleteRetentionPolicy", "logs:TagResource", "logs:UntagResource",
+                "logs:TagLogGroup", "logs:UntagLogGroup"
+              ],
+              "Resource": [
+                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*",
+                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*:*"
+              ]
             },
             {
               "Sid": "ApplyAccountBaselineSettings",
               "Effect": "Allow",
               "Action": [
-                "ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault", "ec2:GetEbsDefaultKmsKeyId",
-                "ec2:ModifyInstanceMetadataDefaults", "ec2:GetInstanceMetadataDefaults",
-                "ec2:DescribeAccountAttributes", "ec2:DescribeRegions",
-                "s3:GetAccountPublicAccessBlock", "s3:PutAccountPublicAccessBlock",
-                "guardduty:*"
+                "ec2:EnableEbsEncryptionByDefault",
+                "ec2:DisableEbsEncryptionByDefault",
+                "ec2:ModifyEbsDefaultKmsKeyId",
+                "ec2:ResetEbsDefaultKmsKeyId",
+                "ec2:ModifyInstanceMetadataDefaults",
+                "s3:PutAccountPublicAccessBlock",
+                "guardduty:CreateDetector",
+                "guardduty:UpdateDetector",
+                "guardduty:DeleteDetector",
+                "guardduty:TagResource",
+                "guardduty:UntagResource"
               ],
               "Resource": "*"
             },
             {
-              "Sid": "NeverRunWorkloads",
-              "Effect": "Deny",
-              "Action": [
-                "ec2:RunInstances", "ec2:StartInstances", "ec2:CreateFleet",
-                "ec2:RequestSpotInstances", "ec2:RequestSpotFleet", "ec2:RunScheduledInstances",
-                "ec2:CreateNatGateway",
-                "bedrock:*", "bedrock-agentcore:*", "aws-external-anthropic:*",
-                "lambda:*", "ecs:*", "apprunner:*",
-                "transcribe:*", "translate:*", "mediaconvert:*",
-                "athena:*", "glue:*",
-                "kinesis:*", "firehose:*", "kinesisanalytics:*", "kinesisvideo:*",
-                "dynamodb:*", "dax:*", "elasticfilesystem:*",
-                "ecr:*", "ecr-public:*", "imagebuilder:*", "states:*",
-                "codebuild:*", "codedeploy:*", "codepipeline:*",
-                "apigateway:*", "execute-api:*", "sagemaker:*"
+              "Sid": "CreateOnlyBoundedQuarantineRoles",
+              "Effect": "Allow",
+              "Action": "iam:CreateRole",
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
               ],
-              "Resource": "*"
+              "Condition": {
+                "StringEquals": {
+                  "iam:PermissionsBoundary": "${CostQuarantineRoleBoundary}"
+                }
+              }
             },
             {
-              "Sid": "NoSelfEscalationViaIdentityCenter",
-              "Effect": "Deny",
+              "Sid": "ManageOnlyBoundedQuarantineRoles",
+              "Effect": "Allow",
               "Action": [
-                "sso:CreateAccountAssignment", "sso:DeleteAccountAssignment", "sso:ProvisionPermissionSet",
-                "sso:PutInlinePolicyToPermissionSet", "sso:AttachManagedPolicyToPermissionSet",
-                "sso:CreatePermissionSet", "sso:UpdatePermissionSet", "sso:PutPermissionsBoundaryToPermissionSet",
-                "identitystore:CreateUser", "identitystore:UpdateUser", "identitystore:CreateGroupMembership"
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:UpdateRole",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:TagRole",
+                "iam:UntagRole"
               ],
-              "Resource": "*"
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+              ]
+            },
+            {
+              "Sid": "AttachApprovedBoundaryToQuarantineRoles",
+              "Effect": "Allow",
+              "Action": "iam:PutRolePermissionsBoundary",
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "iam:PermissionsBoundary": "${CostQuarantineRoleBoundary}"
+                }
+              }
+            },
+            {
+              "Sid": "RemoveBoundaryForQuarantineRoleDeletion",
+              "Effect": "Allow",
+              "Action": "iam:DeleteRolePermissionsBoundary",
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+              ]
+            },
+            {
+              "Sid": "AttachOnlyLambdaBasicExecutionPolicy",
+              "Effect": "Allow",
+              "Action": ["iam:AttachRolePolicy", "iam:DetachRolePolicy"],
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+              ],
+              "Condition": {
+                "ArnEquals": {
+                  "iam:PolicyARN": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                }
+              }
+            },
+            {
+              "Sid": "PassOnlyBoundedQuarantineRoles",
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": [
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": [
+                    "budgets.amazonaws.com",
+                    "lambda.amazonaws.com",
+                    "states.amazonaws.com"
+                  ]
+                }
+              }
             }
           ]
         }
 
-  IdentityAdminPermissionSet:
+  IdentityCenterAdminPermissionSet:
     Type: AWS::SSO::PermissionSet
     Properties:
-      Name: IdentityAdmin
-      Description: Powerful, rare-use. Administers Identity Center permission sets and assignments. Effectively org-admin.
+      Name: IdentityCenterAdmin
+      Description: Rare-use Identity Center administration plus lifecycle of this repository's identity stack.
       InstanceArn: !Ref IdentityCenterInstanceArn
-      SessionDuration: !Ref IdentityAdminSessionDuration
-      InlinePolicy: |-
+      SessionDuration: !Ref IdentityCenterAdminSessionDuration
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/AWSSSOMasterAccountAdministrator
+      InlinePolicy: !Sub |-
         {
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "AdministerIdentityCenter",
+              "Sid": "ManageThisIdentityCenterStack",
               "Effect": "Allow",
-              "Action": ["sso:*", "sso-directory:*", "identitystore:*"],
+              "Action": "cloudformation:*",
               "Resource": "*"
             },
             {
-              "Sid": "ReadOrgContext",
+              "Sid": "ManageQuarantineBoundaryLifecycle",
               "Effect": "Allow",
-              "Action": ["organizations:Describe*", "organizations:List*"],
-              "Resource": "*"
-            },
-            {
-              "Sid": "NeverRunWorkloadsFromManagement",
-              "Effect": "Deny",
               "Action": [
-                "ec2:RunInstances", "ec2:StartInstances", "ec2:CreateFleet",
-                "ec2:RequestSpotInstances", "ec2:RequestSpotFleet", "ec2:RunScheduledInstances",
-                "ec2:CreateNatGateway",
-                "bedrock:*", "bedrock-agentcore:*", "aws-external-anthropic:*",
-                "lambda:*", "ecs:*", "apprunner:*",
-                "transcribe:*", "translate:*", "mediaconvert:*",
-                "athena:*", "glue:*",
-                "kinesis:*", "firehose:*", "kinesisanalytics:*", "kinesisvideo:*",
-                "dynamodb:*", "dax:*", "elasticfilesystem:*",
-                "ecr:*", "ecr-public:*", "imagebuilder:*", "states:*",
-                "codebuild:*", "codedeploy:*", "codepipeline:*",
-                "apigateway:*", "execute-api:*", "sagemaker:*"
+                "iam:CreatePolicy",
+                "iam:DeletePolicy",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion",
+                "iam:ListPolicyVersions",
+                "iam:ListEntitiesForPolicy",
+                "iam:CreatePolicyVersion",
+                "iam:DeletePolicyVersion",
+                "iam:SetDefaultPolicyVersion",
+                "iam:TagPolicy",
+                "iam:UntagPolicy"
               ],
-              "Resource": "*"
+              "Resource": "${CostQuarantineRoleBoundary}"
             }
           ]
         }
 
-  CloudOpsAssignment:
+  BillingReadOnlyPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: BillingReadOnly
+      Description: Billing Console visibility for the workload user without billing changes.
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      SessionDuration: !Ref BillingReadOnlySessionDuration
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/AWSBillingReadOnlyAccess
+
+  WorkloadAdminPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: WorkloadAdmin
+      Description: Administrator access for the separate workload user in assigned workload accounts.
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      SessionDuration: !Ref WorkloadAdminSessionDuration
+      ManagedPolicies:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  ManagementReadOnlyAssignment:
     Type: AWS::SSO::Assignment
     Properties:
       InstanceArn: !Ref IdentityCenterInstanceArn
-      PermissionSetArn: !GetAtt CloudOpsPermissionSet.PermissionSetArn
-      PrincipalId: !Ref PrincipalId
-      PrincipalType: !Ref PrincipalType
+      PermissionSetArn: !GetAtt ManagementReadOnlyPermissionSet.PermissionSetArn
+      PrincipalId: !Ref ManagementPrincipalId
+      PrincipalType: USER
       TargetId: !Ref ManagementAccountId
       TargetType: AWS_ACCOUNT
 
-  IdentityAdminAssignment:
+  LandingZoneAdminAssignment:
     Type: AWS::SSO::Assignment
     Properties:
       InstanceArn: !Ref IdentityCenterInstanceArn
-      PermissionSetArn: !GetAtt IdentityAdminPermissionSet.PermissionSetArn
-      PrincipalId: !Ref PrincipalId
-      PrincipalType: !Ref PrincipalType
+      PermissionSetArn: !GetAtt LandingZoneAdminPermissionSet.PermissionSetArn
+      PrincipalId: !Ref ManagementPrincipalId
+      PrincipalType: USER
       TargetId: !Ref ManagementAccountId
+      TargetType: AWS_ACCOUNT
+
+  IdentityCenterAdminAssignment:
+    Type: AWS::SSO::Assignment
+    Properties:
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      PermissionSetArn: !GetAtt IdentityCenterAdminPermissionSet.PermissionSetArn
+      PrincipalId: !Ref ManagementPrincipalId
+      PrincipalType: USER
+      TargetId: !Ref ManagementAccountId
+      TargetType: AWS_ACCOUNT
+
+  BillingReadOnlyAssignment:
+    Type: AWS::SSO::Assignment
+    Properties:
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      PermissionSetArn: !GetAtt BillingReadOnlyPermissionSet.PermissionSetArn
+      PrincipalId: !Ref WorkloadPrincipalId
+      PrincipalType: USER
+      TargetId: !Ref ManagementAccountId
+      TargetType: AWS_ACCOUNT
+
+  TestWorkloadAdminAssignment:
+    Type: AWS::SSO::Assignment
+    Properties:
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      PermissionSetArn: !GetAtt WorkloadAdminPermissionSet.PermissionSetArn
+      PrincipalId: !Ref WorkloadPrincipalId
+      PrincipalType: USER
+      TargetId: !Ref TestAccountId
+      TargetType: AWS_ACCOUNT
+
+  ProdWorkloadAdminAssignment:
+    Type: AWS::SSO::Assignment
+    Condition: AssignProd
+    Properties:
+      InstanceArn: !Ref IdentityCenterInstanceArn
+      PermissionSetArn: !GetAtt WorkloadAdminPermissionSet.PermissionSetArn
+      PrincipalId: !Ref WorkloadPrincipalId
+      PrincipalType: USER
+      TargetId: !Ref ProdAccountId
       TargetType: AWS_ACCOUNT
 
 Outputs:
-  CloudOpsPermissionSetArn:
-    Description: ARN of the everyday CloudOps permission set.
-    Value: !GetAtt CloudOpsPermissionSet.PermissionSetArn
-  IdentityAdminPermissionSetArn:
-    Description: ARN of the powerful IdentityAdmin permission set.
-    Value: !GetAtt IdentityAdminPermissionSet.PermissionSetArn
+  CostQuarantineRoleBoundaryArn:
+    Description: Required permissions boundary for fixed management quarantine roles.
+    Value: !Ref CostQuarantineRoleBoundary
+  ManagementReadOnlyPermissionSetArn:
+    Value: !GetAtt ManagementReadOnlyPermissionSet.PermissionSetArn
+  LandingZoneAdminPermissionSetArn:
+    Value: !GetAtt LandingZoneAdminPermissionSet.PermissionSetArn
+  IdentityCenterAdminPermissionSetArn:
+    Value: !GetAtt IdentityCenterAdminPermissionSet.PermissionSetArn
+  BillingReadOnlyPermissionSetArn:
+    Value: !GetAtt BillingReadOnlyPermissionSet.PermissionSetArn
+  WorkloadAdminPermissionSetArn:
+    Value: !GetAtt WorkloadAdminPermissionSet.PermissionSetArn
+  ProdAssignmentEnabled:
+    Value: !If [AssignProd, "true", "false"]

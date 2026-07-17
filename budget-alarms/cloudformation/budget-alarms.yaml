@@ -1,13 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Home AWS cost guardrails — AWS Budgets with email alerts. Deploy this stack in
-  the Organizations MANAGEMENT (payer) account. From there a single stack can
-  track both org-wide spend and per-linked-account spend, because only the payer
-  account sees consolidated cost data and the LinkedAccount cost filter.
-
-  Defaults create two budgets (overall + dev), which stays within the free tier
-  (first 2 budgets per account are free). The optional prod budget is the 3rd
-  and costs ~$0.02/day (~$0.60/mo).
+  One managed home Safety Net budget in the Organizations management account.
+  It monitors consolidated organization spend and sends simple percentage-based
+  email alerts without per-account micro-budgets.
 
 Parameters:
   NotificationEmail:
@@ -18,41 +13,9 @@ Parameters:
 
   OverallMonthlyLimit:
     Type: Number
-    Default: 10
+    Default: 20
     MinValue: 1
-    Description: Monthly USD budget for total org (consolidated) spend.
-
-  DevAccountId:
-    Type: String
-    Description: 12-digit account id of the dev account (your main spend-risk account).
-    AllowedPattern: "^[0-9]{12}$"
-    ConstraintDescription: Must be a 12-digit AWS account id.
-
-  DevMonthlyLimit:
-    Type: Number
-    Default: 5
-    MinValue: 1
-    Description: Monthly USD budget for the dev account.
-
-  EnableProdBudget:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "false"
-    Description: Also create a budget for the prod account (this is the 3rd budget and leaves the free tier).
-
-  ProdAccountId:
-    Type: String
-    Default: ""
-    Description: 12-digit account id of the prod account (only used when EnableProdBudget=true).
-
-  ProdMonthlyLimit:
-    Type: Number
-    Default: 2
-    MinValue: 1
-    Description: Monthly USD budget for the prod account.
-
-Conditions:
-  CreateProdBudget: !Equals [!Ref EnableProdBudget, "true"]
+    Description: Monthly USD budget for consolidated organization spend.
 
 Resources:
   OverallBudget:
@@ -69,7 +32,7 @@ Resources:
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
-            Threshold: 80
+            Threshold: 25
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
@@ -77,7 +40,15 @@ Resources:
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
-            Threshold: 100
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref NotificationEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 75
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
@@ -85,86 +56,7 @@ Resources:
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-
-  DevBudget:
-    Type: AWS::Budgets::Budget
-    Properties:
-      Budget:
-        BudgetName: home-dev-monthly
-        BudgetType: COST
-        TimeUnit: MONTHLY
-        BudgetLimit:
-          Amount: !Ref DevMonthlyLimit
-          Unit: USD
-        CostFilters:
-          LinkedAccount:
-            - !Ref DevAccountId
-      NotificationsWithSubscribers:
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 80
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-        - Notification:
-            NotificationType: FORECASTED
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-
-  ProdBudget:
-    Type: AWS::Budgets::Budget
-    Condition: CreateProdBudget
-    Properties:
-      Budget:
-        BudgetName: home-prod-monthly
-        BudgetType: COST
-        TimeUnit: MONTHLY
-        BudgetLimit:
-          Amount: !Ref ProdMonthlyLimit
-          Unit: USD
-        CostFilters:
-          LinkedAccount:
-            - !Ref ProdAccountId
-      NotificationsWithSubscribers:
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 80
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref NotificationEmail
-        - Notification:
-            NotificationType: FORECASTED
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
+            Threshold: 50
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
@@ -172,12 +64,8 @@ Resources:
 
 Outputs:
   OverallBudgetName:
-    Description: Name of the org-wide monthly budget.
+    Description: Name of the managed organization-wide monthly budget.
     Value: !Ref OverallBudget
-  DevBudgetName:
-    Description: Name of the dev-account monthly budget.
-    Value: !Ref DevBudget
-  ProdBudgetName:
-    Condition: CreateProdBudget
-    Description: Name of the prod-account monthly budget.
-    Value: !Ref ProdBudget
+  OverallMonthlyLimit:
+    Description: Configured monthly limit in USD.
+    Value: !Ref OverallMonthlyLimit

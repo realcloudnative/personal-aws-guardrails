@@ -1,9 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Home baseline — enable Amazon GuardDuty in this account + region. GuardDuty is
-  regional, so deploy this stack once per region you care about (see
-  deploy-guardduty.sh). This is the only home-baseline setting with a native
-  CloudFormation resource; the rest are applied by apply-account-baseline.sh.
+  Home baseline — enable Amazon GuardDuty in this account's one deliberately
+  selected detector Region. The deploy wrapper defaults management to us-east-1
+  and workloads to eu-central-1, and refuses to proceed while another enabled
+  detector exists in an inspected Region. This is the only home-baseline setting
+  with a native CloudFormation resource; the rest are applied by
+  apply-account-baseline.sh.
 
 Parameters:
   FindingPublishingFrequency:

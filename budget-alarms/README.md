@@ -1,76 +1,74 @@
 # budget-alarms
 
-Home cost guardrails: AWS Budgets with email alerts. The single most useful
-home guardrail — it catches the mistakes SCPs can't (a `t3.micro` left running,
-a NAT Gateway, data egress, an experiment you forgot to tear down).
+One managed, organization-wide AWS Budget for a simple home Safety Net. It runs
+in the Organizations management/payer account because that account sees
+consolidated spend.
 
-## Where does this run? (management account)
+## Managed budget
 
-Deploy this **in the Organizations management / payer account**, and run both
-the org-wide and per-account budgets from there:
+| Name | Scope | Default limit | Notifications |
+|---|---|---:|---|
+| `home-overall-monthly` | Entire organization | $20/month | Actual 25%, 50%, 75%; forecasted 50% |
 
-- The payer account is the only place that sees **consolidated** cost data and
-  can filter budgets by `LinkedAccount`. So one stack covers the org total
-  *and* each account (dev, prod).
-- A budget created *inside* a member account only sees that account's own spend
-  and can't reference siblings — so per-account-in-each-account means more
-  stacks and credentials for zero benefit at home.
+There are deliberately no $5 Test or $2 Prod micro-budgets. The separate
+[`cost-quarantine`](../cost-quarantine) component owns the high-threshold
+linked-account actions: Test forecasted $50 and Prod actual $50.
 
-## What gets created
-
-| Budget | Scope | Default limit | In free tier? |
-|--------|-------|---------------|---------------|
-| `home-overall-monthly` | Whole org (consolidated) | $10/mo | yes (1st) |
-| `home-dev-monthly` | Dev account only | $5/mo | yes (2nd) |
-| `home-prod-monthly` *(opt-in)* | Prod account only | $2/mo | no (3rd) |
-
-Each budget alerts the same email at **80% actual**, **100% actual**, and
-**100% forecasted**.
-
-**Cost:** the first **2 budgets per account are free**; each additional is
-~$0.02/day (~$0.60/mo). Defaults stay free (overall + dev). The prod budget is
-opt-in because it's the 3rd.
-
-These defaults reflect a genuinely small home org: normal spend under ~$10/mo
-total, ~$5 dev, ~$2 prod (a small blog). **Expect the overall budget to trip
-once a year when your domain renews** (a `.com` renewal is ~$13, more than a
-$10 month) — that alert is informational and expected, not a problem to fix.
-
-Why dev gets its own budget and prod is optional: dev is your spend-risk
-account (experiments), prod is a small, stable blog. Start with overall + dev;
-add prod only if you want the extra signal.
+Budget data is delayed and evaluated periodically. Alerts are a warning system,
+not a real-time spending cap.
 
 ## Deploy
 
-> Run in the management account, with SCPs/Budgets-capable credentials.
-> Budgets is a global service; us-east-1 is its endpoint.
+Use the management user's `LandingZoneAdmin` profile. The notification address
+is a local deployment input and must not be committed.
 
 ```bash
-# Overall + dev budgets (free tier):
-./deploy.sh you@example.com 111122223333
+export AWS_PROFILE=home-mgmt-landing
+./deploy.sh <notification-email>
 
-# Add the prod budget too:
-ENABLE_PROD_BUDGET=true PROD_ACCOUNT_ID=444455556666 \
-  ./deploy.sh you@example.com 111122223333
-
-# Custom limits:
-OVERALL_LIMIT=80 DEV_LIMIT=30 ./deploy.sh you@example.com 111122223333
+# Optional limit override; the approved default is $20.
+OVERALL_LIMIT=30 ./deploy.sh <notification-email>
 ```
 
-Parameters can also be set directly via `aws cloudformation deploy
---parameter-overrides` (see `cloudformation/budget-alarms.yaml`).
+The wrapper verifies the SSO role and Organizations management account before
+CloudFormation runs. Budgets uses the `us-east-1` control-plane endpoint by
+default even though the budget monitors consolidated global spend.
 
-## Notes
+## Replace the existing unmanaged Safety Net without an alert gap
 
-- Budgets refresh roughly 3x/day, so alerts are near-real-time but not instant.
-- Email subscribers receive a one-time confirmation from AWS Budgets — no
-  action needed beyond noting the first message is legitimate.
-- To alert more than one address, add more `EMAIL` subscribers in the template
-  (up to 10 per notification), or switch a subscriber to an SNS topic.
+Reconciliation found an unmanaged budget named `Safety Net` with the approved
+$20 limit and the same 25/50/75 actual plus 50 forecasted percentages.
+CloudFormation cannot silently adopt it. Migration is deliberately staged:
+
+1. Deploy `home-budget-alarms`, creating `home-overall-monthly` first.
+2. Verify its $20 limit, all four notifications, and intended email subscriber.
+3. Leave both budgets active long enough to confirm the managed alert path.
+4. Separately delete `Safety Net` only after explicit authorization.
+
+The deployment wrapper never deletes the old budget. An authorized management
+operator can perform the final removal after verification:
+
+```bash
+MANAGEMENT_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+aws budgets delete-budget \
+  --account-id "$MANAGEMENT_ACCOUNT_ID" \
+  --budget-name "Safety Net" \
+  --region us-east-1
+```
+
+Deletion is irreversible as a budget resource and is intentionally outside the
+CloudFormation deployment.
+
+## Local validation
+
+```bash
+cfn-lint cloudformation/budget-alarms.yaml
+bash -n deploy.sh
+```
 
 ## Files
 
-```
+```text
 budget-alarms/
 ├── README.md
 ├── deploy.sh

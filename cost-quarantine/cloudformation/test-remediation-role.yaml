@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Test-account side of the home cost-quarantine workflow. Deploy only in Test.
+  Creates the narrowly scoped role assumed by the management-account regional
+  remediation Lambda invoked by the Standard Step Functions workflow. It permits enumeration, stop, and scale-to-zero;
+  it does not permit delete, terminate, or remove operations.
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: Must be a 12-digit AWS account ID.
+
+  TestRemediationRoleName:
+    Type: String
+    Default: home-cost-quarantine-remediation
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+    Description: Must match the management stack parameter of the same name.
+
+Resources:
+  TestRemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref TestRemediationRoleName
+      Description: Reversible stop and scale-to-zero permissions for Test cost quarantine.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TrustOnlyNamedManagementRemediatorRole
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${ManagementAccountId}:root
+            Action: sts:AssumeRole
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !Sub arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator
+      Policies:
+        - PolicyName: enumerate-and-reversibly-remediate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EnumerateConfiguredRegionalResources
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - autoscaling:DescribeAutoScalingGroups
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                Resource: "*"
+              - Sid: StopEc2
+                Effect: Allow
+                Action: ec2:StopInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*
+              - Sid: StopRdsInstances
+                Effect: Allow
+                Action: rds:StopDBInstance
+                Resource: !Sub arn:${AWS::Partition}:rds:*:${AWS::AccountId}:db:*
+              - Sid: StopRdsClusters
+                Effect: Allow
+                Action: rds:StopDBCluster
+                Resource: !Sub arn:${AWS::Partition}:rds:*:${AWS::AccountId}:cluster:*
+              - Sid: ScaleAutoScalingGroupsToZero
+                Effect: Allow
+                Action: autoscaling:UpdateAutoScalingGroup
+                Resource: !Sub arn:${AWS::Partition}:autoscaling:*:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/*
+              - Sid: ScaleEcsServicesToZero
+                Effect: Allow
+                Action: ecs:UpdateService
+                Resource: !Sub arn:${AWS::Partition}:ecs:*:${AWS::AccountId}:service/*
+      Tags:
+        - Key: home:workflow
+          Value: cost-quarantine
+
+Outputs:
+  TestRemediationRoleArn:
+    Value: !GetAtt TestRemediationRole.Arn
+    Description: Pass this role name unchanged to the management stack.

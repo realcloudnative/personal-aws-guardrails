@@ -1,35 +1,89 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Automatic cost-overrun failsafe. Deploy in the Organizations MANAGEMENT
-  (payer) account. Watches ACTUAL spend for the dev account and, at a high "3x"
-  threshold, AUTOMATICALLY attaches a quarantine SCP that stops new
-  cost-generating actions while leaving read / stop / delete / billing intact.
-
-  This is a reluctant damage-limiter, NOT a hard spend cap:
-    * Budgets refresh cost data only a few times a day, so it lags hours.
-    * Recovery is manual: detach the SCP from the management account (which is
-      never bound by SCPs) — see the README.
-  Scoping the budget to the dev account intentionally excludes prod's annual
-  Route 53 domain renewal from the trigger.
+  Home cost quarantine deployed in the Organizations management account. Native
+  AWS Budget actions attach one conservative containment SCP to Test when
+  forecasted spend reaches its threshold and to Prod when actual spend reaches
+  its threshold. Optional active remediation is disabled by default.
 
 Parameters:
-  DevAccountId:
+  TestAccountId:
     Type: String
     AllowedPattern: "^[0-9]{12}$"
-    ConstraintDescription: Must be a 12-digit AWS account id.
-    Description: The dev account to monitor and quarantine.
+    ConstraintDescription: Must be a 12-digit AWS account ID.
+    Description: Test account monitored at the forecasted-spend threshold.
 
-  QuarantineThreshold:
+  ProdAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: Must be a 12-digit AWS account ID.
+    Description: Prod account monitored at the actual-spend threshold.
+
+  QuarantineRoleBoundaryArn:
+    Type: String
+    AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/home-cost-quarantine-role-boundary$"
+    Description: Boundary ARN output by the permanent Identity Center stack.
+
+  EnableRemediation:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Create the Test-only SNS/Lambda/Step Functions remediation path. Keep false until that design is approved.
+
+  TestRemediationRoleName:
+    Type: String
+    Default: home-cost-quarantine-remediation
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+    Description: Cross-account Test role used only when remediation is enabled.
+
+  TestBudgetName:
+    Type: String
+    Default: home-cost-quarantine-test
+    AllowedPattern: "^[^:\\]+$"
+    MaxLength: 100
+
+  ProdBudgetName:
+    Type: String
+    Default: home-cost-quarantine-prod
+    AllowedPattern: "^[^:\\]+$"
+    MaxLength: 100
+
+  TestQuarantineThreshold:
     Type: Number
-    Default: 15
+    Default: 50
     MinValue: 1
-    Description: ACTUAL monthly USD spend (dev account) that triggers quarantine. Default 15 = 3x the $5 dev budget.
+    Description: FORECASTED monthly Test-account spend in USD that triggers containment.
+
+  ProdQuarantineThreshold:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    Description: ACTUAL monthly Prod-account spend in USD that triggers containment.
 
   NotificationEmail:
     Type: String
     AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
     ConstraintDescription: Must be a valid email address.
-    Description: Address notified when the quarantine action fires.
+
+  RemediationRegions:
+    Type: CommaDelimitedList
+    Default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
+    Description: Regions enumerated only when optional Test remediation is enabled.
+
+  MaxPagesPerService:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 100
+    Description: Pagination bound used only by optional Test remediation.
+
+Rules:
+  DistinctWorkloadAccounts:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref TestAccountId, !Ref ProdAccountId]]
+        AssertDescription: Test and Prod account IDs must be different.
+
+Conditions:
+  EnableRemediationResources: !Equals [!Ref EnableRemediation, "true"]
 
 Resources:
   QuarantineScp:
@@ -37,82 +91,70 @@ Resources:
     Properties:
       Name: home-cost-quarantine
       Type: SERVICE_CONTROL_POLICY
-      Description: Emergency cost quarantine — denies new cost-generating actions. Attached automatically by a budget action; detach manually to lift.
-      # No TargetIds: this policy stays DETACHED until the budget action attaches it.
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "DenyExpensiveCompute",
-              "Effect": "Deny",
-              "Action": [
-                "ec2:RunInstances",
-                "ec2:StartInstances",
-                "ec2:CreateFleet",
-                "ec2:RequestSpotInstances",
-                "ec2:RequestSpotFleet",
-                "ec2:RunScheduledInstances"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyAiInference",
-              "Effect": "Deny",
-              "Action": [
-                "bedrock:InvokeModel",
-                "bedrock:InvokeModelWithResponseStream",
-                "bedrock:Converse",
-                "bedrock:ConverseStream",
-                "bedrock:StartAsyncInvoke",
-                "bedrock:CreateModelInvocationJob",
-                "bedrock-agentcore:InvokeAgentRuntime",
-                "bedrock-agentcore:InvokeAgentRuntimeForUser",
-                "aws-external-anthropic:*"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyServerlessAndOrchestration",
-              "Effect": "Deny",
-              "Action": [
-                "lambda:InvokeFunction",
-                "lambda:InvokeFunctionUrl",
-                "states:StartExecution",
-                "states:StartSyncExecution",
-                "ecs:RunTask",
-                "ecs:StartTask",
-                "ecs:CreateService",
-                "ecs:UpdateService",
-                "apprunner:CreateService",
-                "apprunner:UpdateService",
-                "apprunner:StartDeployment",
-                "apprunner:ResumeService"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyDataAndMediaJobs",
-              "Effect": "Deny",
-              "Action": [
-                "athena:StartQueryExecution",
-                "transcribe:StartTranscriptionJob",
-                "transcribe:StartMedicalTranscriptionJob",
-                "translate:StartTextTranslationJob",
-                "mediaconvert:CreateJob",
-                "codebuild:StartBuild",
-                "codebuild:StartBuildBatch",
-                "imagebuilder:StartImagePipelineExecution"
-              ],
-              "Resource": "*"
-            }
-          ]
-        }
+      Description: >
+        Emergency Test/Prod containment. Denies selected new/start/invoke actions,
+        but never stop/delete/terminate/remove/diagnostic actions or mitigation updates.
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyNewOrStartedCompute
+            Effect: Deny
+            Resource: "*"
+            Action:
+              - ec2:RunInstances
+              - ec2:StartInstances
+              - ec2:CreateFleet
+              - ec2:RequestSpotInstances
+              - ec2:RequestSpotFleet
+              - ec2:RunScheduledInstances
+              - ec2:CreateNatGateway
+              - elasticloadbalancing:CreateLoadBalancer
+              - rds:CreateDBInstance
+              - rds:CreateDBCluster
+              - rds:RestoreDBInstanceFromDBSnapshot
+              - rds:RestoreDBClusterFromSnapshot
+              - rds:StartDBInstance
+              - rds:StartDBCluster
+              - ecs:RunTask
+              - ecs:StartTask
+              - ecs:CreateService
+              - eks:CreateCluster
+              - eks:CreateNodegroup
+              - states:StartExecution
+              - states:StartSyncExecution
+              - apprunner:CreateService
+              - apprunner:StartDeployment
+              - apprunner:ResumeService
+          - Sid: DenyMeteredAiAndJobs
+            Effect: Deny
+            Resource: "*"
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:Converse
+              - bedrock:ConverseStream
+              - bedrock:StartAsyncInvoke
+              - bedrock:CreateModelInvocationJob
+              - bedrock-agentcore:InvokeAgentRuntime
+              - bedrock-agentcore:InvokeAgentRuntimeForUser
+              - bedrock-mantle:CreateInference
+              - bedrock-mantle:CallWithBearerToken
+              - aws-external-anthropic:*
+              - athena:StartQueryExecution
+              - transcribe:StartTranscriptionJob
+              - transcribe:StartMedicalTranscriptionJob
+              - translate:StartTextTranslationJob
+              - mediaconvert:CreateJob
+              - codebuild:StartBuild
+              - codebuild:StartBuildBatch
+              - imagebuilder:StartImagePipelineExecution
 
-  QuarantineActionRole:
+  BudgetActionRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Role assumed by AWS Budgets to attach/detach the cost-quarantine SCP.
+      RoleName: home-cost-quarantine-budget-action
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Budget-only role for applying or manually reversing the containment SCP.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -120,63 +162,630 @@ Resources:
             Principal:
               Service: budgets.amazonaws.com
             Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:budgets::${AWS::AccountId}:*
       Policies:
-        - PolicyName: attach-quarantine-scp
+        - PolicyName: manage-one-containment-scp
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
-                  - "organizations:AttachPolicy"
-                  - "organizations:DetachPolicy"
-                  - "organizations:DescribePolicy"
-                  - "organizations:ListPolicies"
-                  - "organizations:ListPoliciesForTarget"
-                  - "organizations:ListTargetsForPolicy"
+                  - organizations:AttachPolicy
+                  - organizations:DetachPolicy
+                  - organizations:DescribePolicy
+                  - organizations:ListPoliciesForTarget
+                  - organizations:ListTargetsForPolicy
                 Resource: "*"
 
-  QuarantineBudget:
+  BudgetNotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableRemediationResources
+    Properties:
+      TopicName: home-cost-quarantine-trigger
+      DisplayName: Optional Test cost remediation trigger
+      Tags:
+        - Key: home:workflow
+          Value: cost-quarantine
+
+  BudgetNotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: EnableRemediationResources
+    Properties:
+      Topics: [!Ref BudgetNotificationTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowThisAccountsBudgets
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetNotificationTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:budgets::${AWS::AccountId}:*
+
+  TestQuarantineBudget:
     Type: AWS::Budgets::Budget
     Properties:
       Budget:
-        BudgetName: home-cost-quarantine-dev
+        BudgetName: !Ref TestBudgetName
         BudgetType: COST
         TimeUnit: MONTHLY
         BudgetLimit:
-          Amount: !Ref QuarantineThreshold
+          Amount: !Ref TestQuarantineThreshold
           Unit: USD
         CostFilters:
-          LinkedAccount:
-            - !Ref DevAccountId
+          LinkedAccount: [!Ref TestAccountId]
+      NotificationsWithSubscribers: !If
+        - EnableRemediationResources
+        - - Notification:
+              ComparisonOperator: GREATER_THAN
+              NotificationType: FORECASTED
+              Threshold: !Ref TestQuarantineThreshold
+              ThresholdType: ABSOLUTE_VALUE
+            Subscribers:
+              - SubscriptionType: SNS
+                Address: !Ref BudgetNotificationTopic
+        - !Ref AWS::NoValue
 
-  QuarantineAction:
-    Type: AWS::Budgets::BudgetsAction
-    DependsOn: QuarantineBudget
+  ProdQuarantineBudget:
+    Type: AWS::Budgets::Budget
     Properties:
-      BudgetName: home-cost-quarantine-dev
+      Budget:
+        BudgetName: !Ref ProdBudgetName
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref ProdQuarantineThreshold
+          Unit: USD
+        CostFilters:
+          LinkedAccount: [!Ref ProdAccountId]
+
+  TestQuarantineAction:
+    Type: AWS::Budgets::BudgetsAction
+    DependsOn: TestQuarantineBudget
+    Properties:
+      BudgetName: !Ref TestBudgetName
+      ActionType: APPLY_SCP_POLICY
+      ApprovalModel: AUTOMATIC
+      NotificationType: FORECASTED
+      ActionThreshold:
+        Type: ABSOLUTE_VALUE
+        Value: !Ref TestQuarantineThreshold
+      ExecutionRoleArn: !GetAtt BudgetActionRole.Arn
+      Definition:
+        ScpActionDefinition:
+          PolicyId: !Ref QuarantineScp
+          TargetIds: [!Ref TestAccountId]
+      Subscribers:
+        - Type: EMAIL
+          Address: !Ref NotificationEmail
+
+  ProdQuarantineAction:
+    Type: AWS::Budgets::BudgetsAction
+    DependsOn: ProdQuarantineBudget
+    Properties:
+      BudgetName: !Ref ProdBudgetName
       ActionType: APPLY_SCP_POLICY
       ApprovalModel: AUTOMATIC
       NotificationType: ACTUAL
       ActionThreshold:
         Type: ABSOLUTE_VALUE
-        Value: !Ref QuarantineThreshold
-      ExecutionRoleArn: !GetAtt QuarantineActionRole.Arn
+        Value: !Ref ProdQuarantineThreshold
+      ExecutionRoleArn: !GetAtt BudgetActionRole.Arn
       Definition:
         ScpActionDefinition:
           PolicyId: !Ref QuarantineScp
-          TargetIds:
-            - !Ref DevAccountId
+          TargetIds: [!Ref ProdAccountId]
       Subscribers:
         - Type: EMAIL
           Address: !Ref NotificationEmail
 
+  RemediationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableRemediationResources
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/home-cost-quarantine-remediation
+      RetentionInDays: 30
+
+  RegionalRemediatorExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: EnableRemediationResources
+    Properties:
+      RoleName: home-cost-quarantine-remediator
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Runs regional enumeration and assumes only the Test remediation role.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: assume-only-test-remediation-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+
+  RegionalRemediator:
+    Type: AWS::Lambda::Function
+    Condition: EnableRemediationResources
+    Properties:
+      FunctionName: home-cost-quarantine-remediator
+      Description: Bounded per-region stop and scale-to-zero logic for Test.
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RegionalRemediatorExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          TEST_REMEDIATION_ROLE_ARN: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+          MAX_PAGES_PER_SERVICE: !Ref MaxPagesPerService
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+          from botocore.config import Config
+          from botocore.exceptions import ClientError
+
+          ROLE_ARN = os.environ["TEST_REMEDIATION_ROLE_ARN"]
+          MAX_PAGES = int(os.environ["MAX_PAGES_PER_SERVICE"])
+          CONFIG = Config(
+              retries={"mode": "standard", "max_attempts": 3},
+              connect_timeout=10,
+              read_timeout=30,
+          )
+
+          def chunks(values, size):
+              for offset in range(0, len(values), size):
+                  yield values[offset:offset + size]
+
+          def session_for_test(request_id):
+              response = boto3.client("sts", config=CONFIG).assume_role(
+                  RoleArn=ROLE_ARN,
+                  RoleSessionName=f"cost-quarantine-{request_id[:32]}",
+                  DurationSeconds=900,
+              )
+              credentials = response["Credentials"]
+              return boto3.Session(
+                  aws_access_key_id=credentials["AccessKeyId"],
+                  aws_secret_access_key=credentials["SecretAccessKey"],
+                  aws_session_token=credentials["SessionToken"],
+              )
+
+          def near_timeout(context):
+              return context.get_remaining_time_in_millis() < 15000
+
+          def record_error(summary, service, resource, error):
+              summary["errorCount"] += 1
+              if len(summary["errors"]) >= 100:
+                  return
+              summary["errors"].append({
+                  "service": service,
+                  "resource": str(resource),
+                  "code": error.response.get("Error", {}).get("Code", "ClientError"),
+              })
+
+          def remediate_ec2(client, summary, context):
+              token = None
+              for _ in range(MAX_PAGES):
+                  if near_timeout(context):
+                      summary["truncated"] = True
+                      return
+                  request = {"MaxResults": 1000}
+                  if token:
+                      request["NextToken"] = token
+                  response = client.describe_instances(**request)
+                  instance_ids = [
+                      instance["InstanceId"]
+                      for reservation in response.get("Reservations", [])
+                      for instance in reservation.get("Instances", [])
+                      if instance.get("State", {}).get("Name") == "running"
+                  ]
+                  for batch in chunks(instance_ids, 1000):
+                      try:
+                          client.stop_instances(InstanceIds=batch)
+                          summary["ec2Stopped"] += len(batch)
+                      except ClientError as error:
+                          record_error(summary, "ec2", ",".join(batch), error)
+                  token = response.get("NextToken")
+                  if not token:
+                      return
+              summary["truncated"] = True
+
+          def remediate_rds(client, summary, context):
+              for kind, describe, key, identifier, status_key, stop, counter in (
+                  ("db", client.describe_db_instances, "DBInstances", "DBInstanceIdentifier", "DBInstanceStatus", client.stop_db_instance, "rdsInstancesStopped"),
+                  ("cluster", client.describe_db_clusters, "DBClusters", "DBClusterIdentifier", "Status", client.stop_db_cluster, "rdsClustersStopped"),
+              ):
+                  marker = None
+                  for _ in range(MAX_PAGES):
+                      if near_timeout(context):
+                          summary["truncated"] = True
+                          return
+                      request = {"MaxRecords": 100}
+                      if marker:
+                          request["Marker"] = marker
+                      response = describe(**request)
+                      for resource in response.get(key, []):
+                          if resource.get(status_key) != "available":
+                              continue
+                          resource_id = resource[identifier]
+                          try:
+                              stop(**{identifier: resource_id})
+                              summary[counter] += 1
+                          except ClientError as error:
+                              record_error(summary, f"rds-{kind}", resource_id, error)
+                      marker = response.get("Marker")
+                      if not marker:
+                          break
+                  else:
+                      summary["truncated"] = True
+
+          def remediate_asg(client, summary, context):
+              token = None
+              for _ in range(MAX_PAGES):
+                  if near_timeout(context):
+                      summary["truncated"] = True
+                      return
+                  request = {"MaxRecords": 100}
+                  if token:
+                      request["NextToken"] = token
+                  response = client.describe_auto_scaling_groups(**request)
+                  for group in response.get("AutoScalingGroups", []):
+                      name = group["AutoScalingGroupName"]
+                      try:
+                          client.update_auto_scaling_group(
+                              AutoScalingGroupName=name,
+                              MinSize=0,
+                              DesiredCapacity=0,
+                          )
+                          summary["asgScaledToZero"] += 1
+                      except ClientError as error:
+                          record_error(summary, "autoscaling", name, error)
+                  token = response.get("NextToken")
+                  if not token:
+                      return
+              summary["truncated"] = True
+
+          def remediate_ecs(client, summary, context):
+              cluster_token = None
+              for _ in range(MAX_PAGES):
+                  if near_timeout(context):
+                      summary["truncated"] = True
+                      return
+                  request = {"maxResults": 100}
+                  if cluster_token:
+                      request["nextToken"] = cluster_token
+                  response = client.list_clusters(**request)
+                  for cluster in response.get("clusterArns", []):
+                      service_token = None
+                      for _ in range(MAX_PAGES):
+                          if near_timeout(context):
+                              summary["truncated"] = True
+                              return
+                          service_request = {"cluster": cluster, "maxResults": 100}
+                          if service_token:
+                              service_request["nextToken"] = service_token
+                          services = client.list_services(**service_request)
+                          for service in services.get("serviceArns", []):
+                              try:
+                                  client.update_service(
+                                      cluster=cluster,
+                                      service=service,
+                                      desiredCount=0,
+                                  )
+                                  summary["ecsServicesScaledToZero"] += 1
+                              except ClientError as error:
+                                  record_error(summary, "ecs", service, error)
+                          service_token = services.get("nextToken")
+                          if not service_token:
+                              break
+                      else:
+                          summary["truncated"] = True
+                  cluster_token = response.get("nextToken")
+                  if not cluster_token:
+                      return
+              summary["truncated"] = True
+
+          def handler(event, context):
+              region = event["region"]
+              summary = {
+                  "region": region,
+                  "ec2Stopped": 0,
+                  "rdsInstancesStopped": 0,
+                  "rdsClustersStopped": 0,
+                  "asgScaledToZero": 0,
+                  "ecsServicesScaledToZero": 0,
+                  "truncated": False,
+                  "errorCount": 0,
+                  "errors": [],
+              }
+              session = session_for_test(context.aws_request_id)
+              operations = (
+                  ("ec2", remediate_ec2),
+                  ("rds", remediate_rds),
+                  ("autoscaling", remediate_asg),
+                  ("ecs", remediate_ecs),
+              )
+              for service, operation in operations:
+                  if near_timeout(context):
+                      summary["truncated"] = True
+                      break
+                  try:
+                      operation(session.client(service, region_name=region, config=CONFIG), summary, context)
+                  except ClientError as error:
+                      record_error(summary, service, region, error)
+              return summary
+      Tags:
+        - Key: home:workflow
+          Value: cost-quarantine
+
+  StateMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: EnableRemediationResources
+    Properties:
+      RoleName: home-cost-quarantine-states
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Runs idempotent containment attachment and invokes one regional remediator.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:*
+      Policies:
+        - PolicyName: quarantine-orchestration
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ConfirmAndAttachContainment
+                Effect: Allow
+                Action:
+                  - organizations:AttachPolicy
+                  - organizations:ListPoliciesForTarget
+                Resource: "*"
+              - Sid: InvokeRegionalRemediator
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt RegionalRemediator.Arn
+              - Sid: StepFunctionsLogging
+                Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  RemediationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Condition: EnableRemediationResources
+    Properties:
+      StateMachineName: home-cost-quarantine-remediation
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt StateMachineExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt RemediationLogGroup.Arn
+        IncludeExecutionData: false
+        Level: ERROR
+      DefinitionSubstitutions:
+        QuarantineScpId: !Ref QuarantineScp
+        TestAccountId: !Ref TestAccountId
+        RegionalRemediatorArn: !GetAtt RegionalRemediator.Arn
+      Definition:
+        Comment: Bounded, non-destructive Test-account cost remediation.
+        QueryLanguage: JSONata
+        TimeoutSeconds: 1800
+        StartAt: AttachContainment
+        States:
+          AttachContainment:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:organizations:attachPolicy
+            Arguments:
+              PolicyId: ${QuarantineScpId}
+              TargetId: ${TestAccountId}
+            TimeoutSeconds: 30
+            Retry:
+              - ErrorEquals:
+                  - Organizations.ConcurrentModificationException
+                  - States.Timeout
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 10
+                JitterStrategy: FULL
+            Catch:
+              - ErrorEquals:
+                  - Organizations.DuplicatePolicyAttachmentException
+                Next: InitializeRegions
+            Next: InitializeRegions
+          InitializeRegions:
+            Type: Pass
+            Output:
+              regions: !Ref RemediationRegions
+            Next: RemediateRegions
+          RemediateRegions:
+            Type: Map
+            Items: "{% $states.input.regions %}"
+            MaxConcurrency: 2
+            ItemSelector:
+              region: "{% $states.context.Map.Item.Value %}"
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: RemediateRegion
+              States:
+                RemediateRegion:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  Arguments:
+                    FunctionName: ${RegionalRemediatorArn}
+                    Payload:
+                      region: "{% $states.input.region %}"
+                  TimeoutSeconds: 330
+                  Output: "{% $states.result.Payload %}"
+                  Retry:
+                    - ErrorEquals:
+                        - Lambda.ServiceException
+                        - Lambda.AWSLambdaException
+                        - Lambda.SdkClientException
+                        - Lambda.TooManyRequestsException
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Output:
+                        region: "{% $states.input.region %}"
+                        failed: true
+                        error: "{% $states.errorOutput %}"
+                      Next: RegionDone
+                  Next: RegionDone
+                RegionDone:
+                  Type: Pass
+                  End: true
+            End: true
+
+  TriggerBridgeRole:
+    Type: AWS::IAM::Role
+    Condition: EnableRemediationResources
+    Properties:
+      RoleName: home-cost-quarantine-trigger
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Allows only the Budget SNS bridge to start this remediation workflow.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: start-one-remediation-state-machine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref RemediationStateMachine
+
+  TriggerBridge:
+    Type: AWS::Lambda::Function
+    Condition: EnableRemediationResources
+    Properties:
+      FunctionName: home-cost-quarantine-trigger
+      Description: Minimal SNS-to-Standard-Step-Functions bridge; no remediation logic.
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TriggerBridgeRole.Arn
+      Timeout: 10
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref RemediationStateMachine
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from botocore.exceptions import ClientError
+
+          sfn = boto3.client("stepfunctions")
+
+          def handler(event, context):
+              for record in event.get("Records", []):
+                  sns = record["Sns"]
+                  message_id = sns["MessageId"]
+                  payload = {
+                      "source": "aws.budgets",
+                      "snsMessageId": message_id,
+                      "topicArn": sns["TopicArn"],
+                      "message": sns["Message"],
+                  }
+                  month = sns["Timestamp"][:7]
+                  try:
+                      sfn.start_execution(
+                          stateMachineArn=os.environ["STATE_MACHINE_ARN"],
+                          name=f"budget-{month}",
+                          input=json.dumps(payload, separators=(",", ":")),
+                      )
+                  except ClientError as error:
+                      if error.response["Error"]["Code"] != "ExecutionAlreadyExists":
+                          raise
+              return {"started": True}
+      Tags:
+        - Key: home:workflow
+          Value: cost-quarantine
+
+  AllowSnsInvokeBridge:
+    Type: AWS::Lambda::Permission
+    Condition: EnableRemediationResources
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TriggerBridge
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref BudgetNotificationTopic
+      SourceAccount: !Ref AWS::AccountId
+
+  BridgeSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableRemediationResources
+    Properties:
+      Protocol: lambda
+      TopicArn: !Ref BudgetNotificationTopic
+      Endpoint: !GetAtt TriggerBridge.Arn
+
 Outputs:
   QuarantineScpId:
-    Description: Policy id of the (normally detached) quarantine SCP.
+    Description: Containment SCP controlled by both native Budget actions.
     Value: !Ref QuarantineScp
-  QuarantineActionRoleArn:
-    Description: Role AWS Budgets assumes to attach the quarantine SCP.
-    Value: !GetAtt QuarantineActionRole.Arn
-  ManualLiftCommand:
-    Description: Run this from the management account to lift an active quarantine.
-    Value: !Sub "aws organizations detach-policy --policy-id ${QuarantineScp} --target-id ${DevAccountId}"
+  TestQuarantineActionId:
+    Description: Use with Budgets ExecuteAction REVERSE for manual Test release.
+    Value: !Ref TestQuarantineAction
+  ProdQuarantineActionId:
+    Description: Use with Budgets ExecuteAction REVERSE for manual Prod release.
+    Value: !Ref ProdQuarantineAction
+  TestBudgetName:
+    Value: !Ref TestBudgetName
+  ProdBudgetName:
+    Value: !Ref ProdBudgetName
+  RemediationEnabled:
+    Value: !Ref EnableRemediation
+  RemediationStateMachineArn:
+    Condition: EnableRemediationResources
+    Value: !Ref RemediationStateMachine
+  TestRemediationRoleArn:
+    Condition: EnableRemediationResources
+    Value: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}

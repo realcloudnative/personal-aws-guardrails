@@ -1,0 +1,27 @@
+# Local operating-system and tool metadata
+.DS_Store
+.mcp.json
+
+# Local inventories, audits, and reconciliation notes (may contain account data)
+audit-output/
+audit-outputs/
+local-audit/
+local-audit-output/
+*.audit.json
+*.inventory.json
+
+# Generated and packaged artifacts
+artifacts/
+generated/
+.aws-sam/
+.build/
+__pycache__/
+*.pyc
+*.zip
+*-packaged.yaml
+*.packaged.yaml
+*.generated.yaml
+cfn-lint-report.*
+
+# Local bootstrap scratch/state; never commit identifiers or credentials
+idc-permission-sets/.bootstrap-state/

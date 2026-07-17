@@ -1,410 +1,430 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Home / small-time AWS Organization guardrails — a set of Deny-Unless
-  Service Control Policies (SCPs). Deploy this stack in the Organizations
-  MANAGEMENT account (or a delegated SCP administrator). The management
-  account is never affected by SCPs, so it remains your escape hatch.
+  Deny-Unless Service Control Policies for separate Prod and Test OUs. Every
+  policy is created detached unless its own target parameter is explicitly set.
+  Deploy from the AWS Organizations management account.
 
 Parameters:
-  TargetIds:
+  PolicyNamePrefix:
+    Type: String
+    Default: home-guardrail
+    AllowedPattern: "^[A-Za-z0-9_-]{1,40}$"
+    Description: Generic policy-name prefix. Use a different prefix for a staged migration from legacy policies.
+
+  ProdAllowedRegions:
     Type: CommaDelimitedList
-    Description: >
-      Root id (r-xxxx) and/or OU ids (ou-xxxx-xxxxxxxx) that every policy in
-      this stack attaches to. The default FullAWSAccess SCP must remain
-      attached to these targets — these Deny policies subtract from it.
+    Default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
+    Description: Regions allowed by the Prod region-lock policy.
 
-  EnableBaselineSecurity:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "true"
-    Description: Attach the baseline-security SCP (IMDSv2, protect CloudTrail/GuardDuty, block leaving org, keep EBS default encryption).
+  TestAllowedRegions:
+    Type: CommaDelimitedList
+    Default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
+    Description: Regions allowed by the Test region-lock policy.
 
-  EnableCostControl:
+  ProdRegionLockTargetIds:
     Type: String
-    AllowedValues: ["true", "false"]
-    Default: "true"
-    Description: Attach the cost-control SCP (block RI/capacity commitments and Dedicated tenancy). Domain registration stays allowed.
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave the Prod region lock detached.
+
+  TestRegionLockTargetIds:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave the Test region lock detached.
+
+  ServiceAllowlistTargetIds:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave the service allowlist detached.
+
+  Ec2InstanceSizeTargetIds:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave the EC2 size control detached.
+
+  BaselineSecurityTargetIds:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave common baseline security detached.
+
+  CostControlTargetIds:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
+    Description: Comma-separated OU IDs, or NONE to leave cost controls detached.
 
 Conditions:
-  AttachBaselineSecurity: !Equals [!Ref EnableBaselineSecurity, "true"]
-  AttachCostControl: !Equals [!Ref EnableCostControl, "true"]
+  AttachProdRegionLock: !Not [!Equals [!Ref ProdRegionLockTargetIds, NONE]]
+  AttachTestRegionLock: !Not [!Equals [!Ref TestRegionLockTargetIds, NONE]]
+  AttachServiceAllowlist: !Not [!Equals [!Ref ServiceAllowlistTargetIds, NONE]]
+  AttachEc2InstanceSize: !Not [!Equals [!Ref Ec2InstanceSizeTargetIds, NONE]]
+  AttachBaselineSecurity: !Not [!Equals [!Ref BaselineSecurityTargetIds, NONE]]
+  AttachCostControl: !Not [!Equals [!Ref CostControlTargetIds, NONE]]
 
 Resources:
-  RegionLockPolicy:
+  ProdRegionLockPolicy:
     Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: home-guardrail-region-lock
+      Name: !Sub ${PolicyNamePrefix}-prod-region-lock
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny all actions outside the allowed regions, exempting global/region-less services.
-      TargetIds: !Ref TargetIds
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "DenyOutsideAllowedRegions",
-              "Effect": "Deny",
-              "NotAction": [
-                "account:*",
-                "artifact:*",
-                "aws-external-anthropic:*",
-                "aws-portal:*",
-                "billing:*",
-                "budgets:*",
-                "ce:*",
-                "consolidatedbilling:*",
-                "cur:*",
-                "freetier:*",
-                "invoicing:*",
-                "payments:*",
-                "tax:*",
-                "bcm-data-exports:*",
-                "cost-optimization-hub:*",
-                "purchase-orders:*",
-                "cloudfront:*",
-                "cloudfront-keyvaluestore:*",
-                "health:*",
-                "iam:*",
-                "organizations:*",
-                "route53:*",
-                "route53domains:*",
-                "sts:*",
-                "support:*",
-                "supportplans:*",
-                "trustedadvisor:*"
-              ],
-              "Resource": "*",
-              "Condition": {
-                "StringNotEquals": {
-                  "aws:RequestedRegion": [
-                    "us-east-1",
-                    "us-west-2",
-                    "eu-central-1",
-                    "eu-north-1",
-                    "ap-southeast-1"
-                  ]
-                }
-              }
-            }
-          ]
-        }
+      Description: Deny regional actions outside the Prod allowed-region list; exempt global services.
+      TargetIds: !If
+        - AttachProdRegionLock
+        - !Split [",", !Ref ProdRegionLockTargetIds]
+        - !Ref AWS::NoValue
+      Tags: &OwnershipTags
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyOutsideProdAllowedRegions
+            Effect: Deny
+            NotAction: &GlobalServiceActions
+              - account:*
+              - artifact:*
+              - aws-external-anthropic:*
+              - aws-portal:*
+              - billing:*
+              - budgets:*
+              - ce:*
+              - consolidatedbilling:*
+              - cur:*
+              - freetier:*
+              - invoicing:*
+              - payments:*
+              - tax:*
+              - bcm-data-exports:*
+              - cost-optimization-hub:*
+              - purchase-orders:*
+              - cloudfront:*
+              - cloudfront-keyvaluestore:*
+              - health:*
+              - iam:*
+              - organizations:*
+              - route53:*
+              - route53domains:*
+              - sts:*
+              - support:*
+              - supportplans:*
+              - trustedadvisor:*
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:RequestedRegion: !Ref ProdAllowedRegions
+
+  TestRegionLockPolicy:
+    Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${PolicyNamePrefix}-test-region-lock
+      Type: SERVICE_CONTROL_POLICY
+      Description: Deny regional actions outside the Test allowed-region list; exempt global services.
+      TargetIds: !If
+        - AttachTestRegionLock
+        - !Split [",", !Ref TestRegionLockTargetIds]
+        - !Ref AWS::NoValue
+      Tags: *OwnershipTags
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyOutsideTestAllowedRegions
+            Effect: Deny
+            NotAction: *GlobalServiceActions
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:RequestedRegion: !Ref TestAllowedRegions
 
   ServiceAllowlistPolicy:
     Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: home-guardrail-service-allowlist
+      Name: !Sub ${PolicyNamePrefix}-service-allowlist
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny any service action not in the home allowlist.
-      TargetIds: !Ref TargetIds
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "DenyServicesNotInAllowlist",
-              "Effect": "Deny",
-              "NotAction": [
-                "bedrock:*",
-                "bedrock-agentcore:*",
-                "aws-external-anthropic:*",
-                "events:*",
-                "scheduler:*",
-                "schemas:*",
-                "pipes:*",
-                "transcribe:*",
-                "translate:*",
-                "apigateway:*",
-                "execute-api:*",
-                "athena:*",
-                "glue:GetDatabase",
-                "glue:GetDatabases",
-                "glue:GetTable",
-                "glue:GetTables",
-                "glue:GetPartition",
-                "glue:GetPartitions",
-                "glue:BatchGetPartition",
-                "glue:CreateDatabase",
-                "glue:CreateTable",
-                "glue:UpdateTable",
-                "glue:DeleteTable",
-                "glue:CreatePartition",
-                "glue:BatchCreatePartition",
-                "glue:UpdatePartition",
-                "glue:DeletePartition",
-                "glue:BatchDeletePartition",
-                "apprunner:*",
-                "artifact:*",
-                "health:*",
-                "organizations:*",
-                "aws-portal:*",
-                "billing:*",
-                "account:*",
-                "ce:*",
-                "cur:*",
-                "budgets:*",
-                "consolidatedbilling:*",
-                "freetier:*",
-                "invoicing:*",
-                "payments:*",
-                "tax:*",
-                "bcm-data-exports:*",
-                "cost-optimization-hub:*",
-                "purchase-orders:*",
-                "acm:*",
-                "cloudformation:*",
-                "cloudfront:*",
-                "cloudfront-keyvaluestore:*",
-                "cloudshell:*",
-                "cloudtrail:*",
-                "cloudwatch:*",
-                "logs:*",
-                "codeartifact:*",
-                "codebuild:*",
-                "codecommit:*",
-                "codedeploy:*",
-                "codepipeline:*",
-                "cognito-idp:*",
-                "cognito-identity:*",
-                "cognito-sync:*",
-                "dynamodb:*",
-                "dax:*",
-                "ec2:*",
-                "ec2messages:*",
-                "imagebuilder:*",
-                "elasticfilesystem:*",
-                "elasticloadbalancing:*",
-                "autoscaling:*",
-                "application-autoscaling:*",
-                "ecr:*",
-                "ecr-public:*",
-                "ecs:*",
-                "guardduty:*",
-                "iam:*",
-                "sso:*",
-                "sso-directory:*",
-                "identitystore:*",
-                "sso-oauth:*",
-                "kms:*",
-                "kinesis:*",
-                "firehose:*",
-                "kinesisanalytics:*",
-                "kinesisvideo:*",
-                "lambda:*",
-                "mediaconvert:*",
-                "ram:*",
-                "route53:*",
-                "route53domains:*",
-                "route53resolver:*",
-                "s3:*",
-                "s3-object-lambda:*",
-                "servicequotas:*",
-                "sns:*",
-                "sqs:*",
-                "states:*",
-                "ssm:*",
-                "ssmmessages:*",
-                "trustedadvisor:*",
-                "support:*",
-                "supportplans:*",
-                "sts:*",
-                "tag:*"
-              ],
-              "Resource": "*"
-            }
-          ]
-        }
+      Description: Deny service actions outside the home-workload allowlist.
+      TargetIds: !If
+        - AttachServiceAllowlist
+        - !Split [",", !Ref ServiceAllowlistTargetIds]
+        - !Ref AWS::NoValue
+      Tags: *OwnershipTags
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyServicesNotInAllowlist
+            Effect: Deny
+            NotAction:
+              - bedrock:*
+              - bedrock-agentcore:*
+              - bedrock-mantle:*
+              - aws-external-anthropic:*
+              - aws-marketplace:Subscribe
+              - aws-marketplace:ViewSubscriptions
+              - events:*
+              - scheduler:*
+              - schemas:*
+              - pipes:*
+              - transcribe:*
+              - translate:*
+              - apigateway:*
+              - execute-api:*
+              - athena:*
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:GetTable
+              - glue:GetTables
+              - glue:GetPartition
+              - glue:GetPartitions
+              - glue:BatchGetPartition
+              - glue:CreateDatabase
+              - glue:CreateTable
+              - glue:UpdateTable
+              - glue:DeleteTable
+              - glue:CreatePartition
+              - glue:BatchCreatePartition
+              - glue:UpdatePartition
+              - glue:DeletePartition
+              - glue:BatchDeletePartition
+              - apprunner:*
+              - artifact:*
+              - health:*
+              - organizations:*
+              - aws-portal:*
+              - billing:*
+              - account:*
+              - ce:*
+              - cur:*
+              - budgets:*
+              - consolidatedbilling:*
+              - freetier:*
+              - invoicing:*
+              - payments:*
+              - tax:*
+              - bcm-data-exports:*
+              - cost-optimization-hub:*
+              - purchase-orders:*
+              - acm:*
+              - cloudformation:*
+              - cloudfront:*
+              - cloudfront-keyvaluestore:*
+              - cloudshell:*
+              - cloudtrail:*
+              - cloudwatch:*
+              - logs:*
+              - codeartifact:*
+              - codebuild:*
+              - codecommit:*
+              - codedeploy:*
+              - codepipeline:*
+              - cognito-idp:*
+              - cognito-identity:*
+              - cognito-sync:*
+              - dynamodb:*
+              - dax:*
+              - ec2:*
+              - ec2messages:*
+              - imagebuilder:*
+              - elasticfilesystem:*
+              - elasticloadbalancing:*
+              - autoscaling:*
+              - application-autoscaling:*
+              - ecr:*
+              - ecr-public:*
+              - ecs:*
+              - guardduty:*
+              - iam:*
+              - sso:*
+              - sso-directory:*
+              - identitystore:*
+              - sso-oauth:*
+              - kms:*
+              - kinesis:*
+              - firehose:*
+              - kinesisanalytics:*
+              - kinesisvideo:*
+              - lambda:*
+              - mediaconvert:*
+              - ram:*
+              - rds:DescribeDBInstances
+              - rds:DescribeDBClusters
+              - rds:StopDBInstance
+              - rds:StopDBCluster
+              - route53:*
+              - route53domains:*
+              - route53resolver:*
+              - s3:*
+              - s3-object-lambda:*
+              - servicequotas:*
+              - sns:*
+              - sqs:*
+              - states:*
+              - ssm:*
+              - ssmmessages:*
+              - trustedadvisor:*
+              - support:*
+              - supportplans:*
+              - sts:*
+              - tag:*
+            Resource: "*"
+          - Sid: DenyMarketplaceSubscribeOutsideBedrockMantle
+            Effect: Deny
+            Action: aws-marketplace:Subscribe
+            Resource: "*"
+            Condition:
+              StringNotEqualsIfExists:
+                aws:CalledViaLast: bedrock-mantle.amazonaws.com
 
   Ec2InstanceSizePolicy:
     Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: home-guardrail-ec2-instance-size
+      Name: !Sub ${PolicyNamePrefix}-ec2-instance-size
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny launching EC2 instances larger than *.nano / *.micro / *.small.
-      TargetIds: !Ref TargetIds
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "DenyEc2LargerThanSmall",
-              "Effect": "Deny",
-              "Action": "ec2:RunInstances",
-              "Resource": "arn:aws:ec2:*:*:instance/*",
-              "Condition": {
-                "StringNotLike": {
-                  "ec2:InstanceType": [
-                    "*.nano",
-                    "*.micro",
-                    "*.small"
-                  ]
-                }
-              }
-            }
-          ]
-        }
+      Description: Deny launching EC2 instances larger than nano, micro, or small.
+      TargetIds: !If
+        - AttachEc2InstanceSize
+        - !Split [",", !Ref Ec2InstanceSizeTargetIds]
+        - !Ref AWS::NoValue
+      Tags: *OwnershipTags
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyEc2LargerThanSmall
+            Effect: Deny
+            Action: ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringNotLike:
+                ec2:InstanceType:
+                  - "*.nano"
+                  - "*.micro"
+                  - "*.small"
 
   BaselineSecurityPolicy:
     Type: AWS::Organizations::Policy
-    Condition: AttachBaselineSecurity
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: home-guardrail-baseline-security
+      Name: !Sub ${PolicyNamePrefix}-baseline-security
       Type: SERVICE_CONTROL_POLICY
-      Description: Require IMDSv2 (launch + modify), require encrypted EBS, keep EBS default encryption, protect CloudTrail/GuardDuty, protect account S3 Block Public Access, block IAM user/access-key creation, block leaving the org.
-      TargetIds: !Ref TargetIds
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "RequireImdsv2OnLaunch",
-              "Effect": "Deny",
-              "Action": "ec2:RunInstances",
-              "Resource": "arn:aws:ec2:*:*:instance/*",
-              "Condition": {
-                "StringNotEquals": {
-                  "ec2:MetadataHttpTokens": "required"
-                }
-              }
-            },
-            {
-              "Sid": "DenyImdsv1ReEnableOnExisting",
-              "Effect": "Deny",
-              "Action": "ec2:ModifyInstanceMetadataOptions",
-              "Resource": "arn:aws:ec2:*:*:instance/*",
-              "Condition": {
-                "StringNotEqualsIfExists": {
-                  "ec2:MetadataHttpTokens": "required"
-                }
-              }
-            },
-            {
-              "Sid": "ProtectCloudTrail",
-              "Effect": "Deny",
-              "Action": [
-                "cloudtrail:StopLogging",
-                "cloudtrail:DeleteTrail",
-                "cloudtrail:UpdateTrail",
-                "cloudtrail:PutEventSelectors"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "ProtectGuardDuty",
-              "Effect": "Deny",
-              "Action": [
-                "guardduty:DeleteDetector",
-                "guardduty:UpdateDetector",
-                "guardduty:DisassociateFromMasterAccount",
-                "guardduty:DisassociateFromAdministratorAccount",
-                "guardduty:StopMonitoringMembers",
-                "guardduty:DeleteMembers",
-                "guardduty:DeletePublishingDestination"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyLeaveOrganization",
-              "Effect": "Deny",
-              "Action": "organizations:LeaveOrganization",
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyDisableEbsEncryptionByDefault",
-              "Effect": "Deny",
-              "Action": "ec2:DisableEbsEncryptionByDefault",
-              "Resource": "*"
-            },
-            {
-              "Sid": "RequireEncryptedEbsVolumes",
-              "Effect": "Deny",
-              "Action": [
-                "ec2:CreateVolume",
-                "ec2:RunInstances"
-              ],
-              "Resource": "arn:aws:ec2:*:*:volume/*",
-              "Condition": {
-                "Bool": {
-                  "ec2:Encrypted": "false"
-                }
-              }
-            },
-            {
-              "Sid": "ProtectS3AccountPublicAccessBlock",
-              "Effect": "Deny",
-              "Action": [
-                "s3:PutAccountPublicAccessBlock",
-                "s3:DeleteAccountPublicAccessBlock"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyIamUsersAndAccessKeys",
-              "Effect": "Deny",
-              "Action": [
-                "iam:CreateUser",
-                "iam:CreateAccessKey",
-                "iam:CreateLoginProfile"
-              ],
-              "Resource": "*"
-            }
-          ]
-        }
+      Description: Common IMDSv2, EBS encryption, S3 public-access, IAM credential, and organization protections.
+      TargetIds: !If
+        - AttachBaselineSecurity
+        - !Split [",", !Ref BaselineSecurityTargetIds]
+        - !Ref AWS::NoValue
+      Tags: *OwnershipTags
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RequireImdsv2OnLaunch
+            Effect: Deny
+            Action: ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringNotEquals:
+                ec2:MetadataHttpTokens: required
+          - Sid: DenyExplicitImdsv1OnExisting
+            Effect: Deny
+            Action: ec2:ModifyInstanceMetadataOptions
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringEquals:
+                ec2:MetadataHttpTokens: optional
+          - Sid: DenyLeaveOrganization
+            Effect: Deny
+            Action: organizations:LeaveOrganization
+            Resource: "*"
+          - Sid: DenyDisableEbsEncryptionByDefault
+            Effect: Deny
+            Action: ec2:DisableEbsEncryptionByDefault
+            Resource: "*"
+          - Sid: RequireEncryptedEbsVolumes
+            Effect: Deny
+            Action:
+              - ec2:CreateVolume
+              - ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:volume/*
+            Condition:
+              Bool:
+                ec2:Encrypted: "false"
+          - Sid: ProtectS3AccountPublicAccessBlock
+            Effect: Deny
+            Action:
+              - s3:PutAccountPublicAccessBlock
+              - s3:DeleteAccountPublicAccessBlock
+            Resource: "*"
+          - Sid: DenyIamUsersAndAccessKeys
+            Effect: Deny
+            Action:
+              - iam:CreateUser
+              - iam:CreateAccessKey
+              - iam:CreateLoginProfile
+            Resource: "*"
 
   CostControlPolicy:
     Type: AWS::Organizations::Policy
-    Condition: AttachCostControl
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: home-guardrail-cost-control
+      Name: !Sub ${PolicyNamePrefix}-cost-control
       Type: SERVICE_CONTROL_POLICY
-      Description: Block reserved/capacity commitments and Dedicated tenancy. Domain registration stays allowed.
-      TargetIds: !Ref TargetIds
-      Content: |-
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "DenyEc2CapacityCommitments",
-              "Effect": "Deny",
-              "Action": [
-                "ec2:PurchaseReservedInstancesOffering",
-                "ec2:ModifyReservedInstances",
-                "ec2:PurchaseCapacityBlock",
-                "ec2:PurchaseHostReservation",
-                "ec2:CreateCapacityReservation",
-                "ec2:PurchaseScheduledInstances",
-                "ec2:AllocateHosts"
-              ],
-              "Resource": "*"
-            },
-            {
-              "Sid": "DenyDedicatedTenancy",
-              "Effect": "Deny",
-              "Action": "ec2:RunInstances",
-              "Resource": "arn:aws:ec2:*:*:instance/*",
-              "Condition": {
-                "StringNotEquals": {
-                  "ec2:Tenancy": "default"
-                }
-              }
-            }
-          ]
-        }
+      Description: Block EC2 capacity commitments and Dedicated tenancy; domain registration remains allowed.
+      TargetIds: !If
+        - AttachCostControl
+        - !Split [",", !Ref CostControlTargetIds]
+        - !Ref AWS::NoValue
+      Tags: *OwnershipTags
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyEc2CapacityCommitments
+            Effect: Deny
+            Action:
+              - ec2:PurchaseReservedInstancesOffering
+              - ec2:ModifyReservedInstances
+              - ec2:PurchaseCapacityBlock
+              - ec2:PurchaseHostReservation
+              - ec2:CreateCapacityReservation
+              - ec2:PurchaseScheduledInstances
+              - ec2:AllocateHosts
+            Resource: "*"
+          - Sid: DenyDedicatedTenancy
+            Effect: Deny
+            Action: ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringNotEquals:
+                ec2:Tenancy: default
 
 Outputs:
-  RegionLockPolicyId:
-    Description: Policy id of the region-lock SCP.
-    Value: !Ref RegionLockPolicy
+  ProdRegionLockPolicyId:
+    Description: Policy ID of the Prod region-lock SCP.
+    Value: !Ref ProdRegionLockPolicy
+  TestRegionLockPolicyId:
+    Description: Policy ID of the Test region-lock SCP.
+    Value: !Ref TestRegionLockPolicy
   ServiceAllowlistPolicyId:
-    Description: Policy id of the service-allowlist SCP.
+    Description: Policy ID of the service-allowlist SCP.
     Value: !Ref ServiceAllowlistPolicy
   Ec2InstanceSizePolicyId:
-    Description: Policy id of the EC2 instance-size SCP.
+    Description: Policy ID of the EC2 instance-size SCP.
     Value: !Ref Ec2InstanceSizePolicy
   BaselineSecurityPolicyId:
-    Condition: AttachBaselineSecurity
-    Description: Policy id of the baseline-security SCP.
+    Description: Policy ID of the baseline-security SCP.
     Value: !Ref BaselineSecurityPolicy
   CostControlPolicyId:
-    Condition: AttachCostControl
-    Description: Policy id of the cost-control SCP.
+    Description: Policy ID of the cost-control SCP.
     Value: !Ref CostControlPolicy

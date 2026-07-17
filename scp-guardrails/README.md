@@ -1,167 +1,196 @@
 # scp-guardrails
 
-Deny-Unless Service Control Policies (SCPs) for a home / small-time AWS
-Organization, plus a CloudFormation template to roll them out.
+Deny-Unless Service Control Policies (SCPs) for separate **Prod** and **Test**
+OUs in a small AWS Organization. CloudFormation creates six policies, but every
+policy is **detached by default**. Attachments happen only when its own target
+parameter is explicitly supplied.
 
-Everything here uses the **Deny-Unless** pattern: start from `FullAWSAccess`
-and *subtract* with `Deny` statements that are conditioned ("deny everything
-**unless** …"). This is the recommended way to build guardrails, because new
-services and actions are blocked by default until you explicitly allow them.
+The template never targets the organization root. The deployment wrapper accepts
+OU IDs only and must run with credentials for the Organizations management
+account, which remains the recovery path.
 
-## What gets deployed
+## Policy model
 
-| # | SCP | What it does |
-|---|-----|--------------|
-| 01 | `region-lock` | Deny all actions outside the 5 allowed regions; global services exempt. |
-| 02 | `service-allowlist` | Deny any service not on the home allowlist. |
-| 03 | `ec2-instance-size` | Deny `ec2:RunInstances` for anything larger than `*.small`. |
-| 04 | `baseline-security` *(optional)* | Require IMDSv2 (launch + modify); require encrypted EBS volumes; keep EBS default encryption; protect CloudTrail/GuardDuty; protect account-level S3 Block Public Access; block IAM user/access-key creation; block leaving the org. |
-| 05 | `cost-control` *(optional)* | Block reserved/capacity commitments and Dedicated tenancy. |
+| SCP | Intended use | Independent target parameter |
+|---|---|---|
+| Prod region lock | Prod-specific allowed Regions | `ProdRegionLockTargetIds` |
+| Test region lock | Test-specific allowed Regions | `TestRegionLockTargetIds` |
+| Service allowlist | Common service boundary, normally both OUs | `ServiceAllowlistTargetIds` |
+| EC2 instance size | Stricter environment control, normally Test | `Ec2InstanceSizeTargetIds` |
+| Baseline security | Common security, normally both OUs | `BaselineSecurityTargetIds` |
+| Cost control | Stricter cost controls, normally Test | `CostControlTargetIds` |
 
-Each SCP is defined **once**, embedded in
-[`cloudformation/scp-guardrails.yaml`](./cloudformation/scp-guardrails.yaml),
-which is also what deploys them. That template is the single source of truth —
-there is no separate copy of the policy JSON to keep in sync.
+Each target parameter accepts a comma-separated list of OU IDs. Its default is
+`NONE`, which omits `TargetIds` and leaves that SCP detached. No account, root,
+or OU identifiers are embedded in the repository.
 
-## The May 2026 SCP quota increase
+A typical split is:
 
-On **15 May 2026** AWS doubled the two headline SCP limits:
+- **Common security (Prod + Test):** baseline security and, after compatibility
+  testing, the service allowlist. Supply both OU IDs to each policy's parameter.
+- **Prod:** its own conservative Region list and stricter, stability-oriented
+  controls validated against production recovery procedures.
+- **Test:** its own explicit Region list plus EC2 size and cost controls. Add an
+  experimental Region deliberately without changing Prod, then remove it only
+  after its resources have been inventoried and cleaned up.
 
-- Max SCPs attached per node (root / OU / account): **5 → 10**
-- Max SCP document size: **5,120 → 10,240 characters**
+Both Region lists default independently to `us-east-1`, `us-west-2`,
+`eu-central-1`, `eu-north-1`, and `ap-southeast-1`.
 
-That is why these are kept as **five separate, individually-detachable
-policies** rather than being crammed into one. You can attach all of them to a
-single OU or root and still have room for five more. The largest policy here
-(the service allowlist) is comfortably under the new 10,240-character ceiling.
+## What baseline security enforces
 
-## Allowed regions
+The common baseline denies:
 
-`us-east-1`, `us-west-2`, `eu-central-1`, `eu-north-1`, `ap-southeast-1`.
+- launches without IMDSv2 and modifications that explicitly set
+  `HttpTokens=optional`; unrelated metadata-options changes are not denied;
+- unencrypted EBS volume creation and disabling EBS encryption by default;
+- changing or deleting account-level S3 Block Public Access;
+- IAM user, access-key, and login-profile creation; and
+- leaving the Organization.
 
-Region-less / global services are exempted in the region-lock SCP via
-`NotAction` so they keep working: IAM, Organizations, Route 53 (+ Domains),
-CloudFront, the billing family, Artifact, Health, Trusted Advisor, Support,
-STS, and `aws-external-anthropic` (Claude Platform on AWS).
+Enable all four account-level S3 Block Public Access settings **before** attaching
+this policy because AWS has no request condition that distinguishes enabling from
+disabling them.
 
-## Service allowlist — mapping and decisions
+There is deliberately no CloudTrail lifecycle protection: this repository relies
+on the default 90-day CloudTrail Event History and creates no trail to protect.
+There is also no GuardDuty lifecycle deny. GuardDuty is optional in the account
+baseline, and SCP lifecycle locks can prevent legitimate disablement,
+administrator changes, or decommissioning.
 
-Your requested services map to these IAM prefixes. A few notes on choices made
-during design (all confirmed with you):
+The service allowlist includes the distinct `bedrock-mantle:*` prefix used by
+Amazon Bedrock Powered by AWS Mantle. Mantle's AWS-managed inference policy also
+uses `aws-marketplace:Subscribe` and `aws-marketplace:ViewSubscriptions` for
+third-party models; those actions pass the allowlist, but an explicit SCP deny
+still blocks `Subscribe` unless `aws:CalledViaLast` is
+`bedrock-mantle.amazonaws.com`. The quarantine separately denies Mantle's
+`CreateInference` and `CallWithBearerToken` spend paths.
 
-- **Secrets Manager: removed.** Use SSM Parameter Store instead (covered by
-  `ssm:*`). SecureString parameters still work because `kms:*` is allowed.
-- **Glue: reduced to a Data Catalog subset** (not `glue:*`). Only the
-  database/table/partition read + CRUD actions Athena needs for queries and
-  CTAS/`INSERT INTO`. No crawlers, jobs, connections, or dev endpoints.
-- **ECS / EC2 helpers added:** `elasticloadbalancing:*`, `autoscaling:*`,
-  `application-autoscaling:*` — without these you cannot put a load balancer in
-  front of ECS or scale services/instances.
-- **Unavoidable "glue" prefixes kept:** `sts:*` (assume-role — SSO, CFN,
-  Lambda, ECS all break without it), `tag:*`, `support:*`, `aws-portal:*`.
-- **AWS Global View** is the EC2 console cross-region view; it is read-only
-  `ec2:Describe*`, already covered by `ec2:*`. No separate prefix needed.
+The service allowlist still permits the `cloudtrail:*` and `guardduty:*` service
+prefixes; permitting a service through an SCP grants no IAM permission by itself.
 
-### EC2 instance size limit
+## Effective policy behavior and `FullAWSAccess`
 
-Denies `ec2:RunInstances` unless the type matches `*.nano`, `*.micro`, or
-`*.small`. Because the match is on the size suffix, it applies across all
-families (e.g. `t3.micro`, `t4g.small`, `c7g.nano` are fine; `t3.medium` and up
-are blocked).
+Keep AWS's default `FullAWSAccess` SCP attached at every applicable level. These
+policies contain only explicit denies: they subtract permissions and never grant
+one. Removing `FullAWSAccess` can make an OU unusable when no other SCP supplies
+an allow.
 
-> Note: this guards the launch action. Resizing a stopped instance via
-> `ec2:ModifyInstanceAttribute` is not covered by this condition key; add a
-> separate statement if you want to block that path too.
+Effective access is the intersection of identity/resource permissions and every
+SCP inherited through the organization hierarchy. An explicit deny in **any**
+applicable SCP wins. For example, allowing EC2 in the service allowlist does not
+override the Test Region lock, EC2 size control, or an inherited parent policy.
+Before attaching common security to both OUs, test the combined effective policy,
+not each document in isolation.
 
-## Deploy
+## Deploy safely
 
-> Run from the **Organizations management account** (or a delegated SCP admin).
-> SCPs must be enabled in Organizations first. The management account is never
-> restricted by SCPs — that is your escape hatch.
+Prerequisites: AWS CLI v2, SCP policy type enabled, `FullAWSAccess` retained, and
+credentials for the Organizations **management account**. Delegated administrator
+credentials are intentionally rejected by the wrapper.
 
-```bash
-# Attach all policies to the org root:
-./deploy.sh r-abcd
-
-# …or to a specific OU:
-./deploy.sh ou-abcd-11112222
-
-# Skip the optional policies:
-STACK_NAME=home-scp-guardrails ./deploy.sh r-abcd   # then set params below
-```
-
-To toggle the optional policies, pass parameters to CloudFormation
-(`EnableBaselineSecurity` / `EnableCostControl`, both default `true`):
+First create all six policies detached:
 
 ```bash
-aws cloudformation deploy \
-  --stack-name home-scp-guardrails \
-  --template-file cloudformation/scp-guardrails.yaml \
-  --region us-east-1 \
-  --parameter-overrides TargetIds=r-abcd EnableCostControl=false
+cd scp-guardrails
+./deploy.sh
 ```
 
-Keep the default `FullAWSAccess` SCP attached to the same target(s) — these
-Deny policies only subtract from it.
+The script prints the current STS identity, calls Organizations to verify its
+account is the management account, validates OU/Region formats, and displays the
+complete attachment plan. If any target is present, it requires typing `ATTACH`.
+For an intentional non-interactive run, set `ATTACH_CONFIRMATION=ATTACH`.
 
-## Recommended additional Deny-Unless rules for a home setup
+After reviewing the detached policy documents, attach in small stages. The IDs
+below are examples of the required format, not values to copy:
 
-### Now included in `baseline-security` (04)
+```bash
+./deploy.sh \
+  --prod-region-targets ou-abcd-11111111 \
+  --test-region-targets ou-abcd-22222222 \
+  --service-allowlist-targets ou-abcd-11111111,ou-abcd-22222222 \
+  --baseline-targets ou-abcd-11111111,ou-abcd-22222222 \
+  --ec2-size-targets ou-abcd-22222222 \
+  --cost-control-targets ou-abcd-22222222
+```
 
-The following were added after review and ship in policy 04:
+Use `--prod-regions` and `--test-regions` for different lists. The wrapper sends
+all target parameters on every run; omitted target options become `NONE` and are
+therefore detached. This makes `./deploy.sh` a deliberate detach-all rollback,
+subject to the identity and management-account checks.
 
-- **IMDSv2 on existing instances** — deny `ec2:ModifyInstanceMetadataOptions`
-  that would re-enable IMDSv1 (`StringNotEqualsIfExists` so it only fires when a
-  caller explicitly sets `HttpTokens=optional`, never on unrelated edits like
-  hop limit).
-- **Require encrypted EBS** — deny `ec2:CreateVolume` / `ec2:RunInstances` when
-  `ec2:Encrypted = false`, on top of keeping EBS default encryption on.
-- **Protect account-level S3 Block Public Access** — deny
-  `s3:PutAccountPublicAccessBlock` and `s3:DeleteAccountPublicAccessBlock`.
-- **Block IAM users / long-lived keys** — deny `iam:CreateUser`,
-  `iam:CreateAccessKey`, `iam:CreateLoginProfile` (you use IAM Identity Center).
+Environment overrides are `STACK_NAME`, `REGION`, and `POLICY_NAME_PREFIX`.
+Policy names and tags are generic (`project=cloud-mgmt`,
+`component=scp-guardrails`, `managed-by=cloudformation`).
 
-> **Prerequisite for the S3 rule:** there is no condition key to tell "enable"
-> from "disable" on these calls, so the policy blocks the calls outright.
-> **Enable account-level S3 Block Public Access (all four settings) *before*
-> attaching policy 04** — otherwise this rule will also prevent you from turning
-> it on. Account-level BPA overrides per-bucket settings, which is why only the
-> account-level actions are blocked (bucket-level `Put` stays available).
+## Staged reconciliation with legacy policies
 
-### Still optional / not done as SCPs
+Do not replace an attached legacy Region lock in one step. Reconcile it as a
+controlled migration:
 
-1. **Remove root credentials from member accounts** (not an SCP). Use
-   centralized root access in Organizations — cleaner than any deny-root policy,
-   which is why there is no deny-root SCP here.
-2. **Protect the guardrails themselves** — deny detaching/deleting these SCPs or
-   modifying the CloudFormation execution role from within member accounts.
+1. Inventory all policies directly attached to Prod and Test and all inherited
+   policies. Record the effective policy for representative accounts.
+2. Deploy this stack detached. To run it beside an existing stack whose names
+   would conflict, use a new `STACK_NAME` and `POLICY_NAME_PREFIX`.
+3. Compare each new policy with the corresponding legacy policy. Resolve service
+   and Region differences before attachment.
+4. Attach one new common policy to Test, exercise normal deploy/read/update/delete
+   paths, then proceed policy-by-policy. Apply the Prod Region lock only after
+   Prod validation and a rollback window are ready.
+5. Detach the equivalent legacy policy only after the new policy is proven. Do
+   not leave overlapping old/new Region policies unintentionally: their allowed
+   Regions intersect, so the narrower result wins.
+6. Observe for a suitable period, then explicitly decommission retained legacy
+   policies.
 
-### CloudWatch Logs retention — why it is *not* an SCP
+### Resources in Regions being removed
 
-You asked to deny creating log groups that have **no** retention (infinite).
-This **cannot be done with an SCP**: `CreateLogGroup` has no retention
-parameter (groups are always created as "never expire"), and there is no
-`logs:` condition key for retention days — so there is nothing for a
-Deny-Unless rule to match at creation time.
+A Region-lock SCP does not stop or delete existing resources. It can deny the API
+calls needed to inspect, modify, stop, export, or delete them. Before removing a
+Region, inventory and migrate or delete its resources, including regional logs,
+snapshots, keys, and networking dependencies. If something is missed, restore
+the Region to the relevant allowed list from the management account, perform the
+cleanup, then narrow the list again.
 
-Enforceable alternatives:
+## Rollback and decommissioning
 
-- **Auto-remediate (recommended):** an EventBridge rule on the `CreateLogGroup`
-  CloudTrail event triggering a small Lambda that calls `PutRetentionPolicy`
-  with a default (e.g. 30 days). This is the only way to *guarantee* finite
-  retention, and it fits the Lambda pattern already in `scheduled-switch/`.
-- **Complementary SCP guard:** deny `logs:DeleteRetentionPolicy` so an existing
-  retention can't be reverted back to infinite. (Not added yet — say the word.)
+Fast rollback is to rerun the wrapper without the affected target option (or with
+no target options to detach all managed SCPs). Because the management account is
+not affected by SCPs, it can also detach a bad policy through Organizations if a
+CloudFormation update cannot complete. Restore service first; investigate policy
+changes second.
 
-> AWS Config has a managed rule for this (`cw-loggroup-retention-period-check`),
-> but Config bills per item and we've deliberately left it out for cost.
+Every policy has `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain`.
+Deleting or replacing the stack therefore does not silently remove a protection.
+This also means stack deletion is **not** decommissioning: retained policies can
+remain attached and continue denying actions. To retire one safely:
+
+1. remove its targets and deploy;
+2. verify the OU's effective policy and workloads;
+3. delete the stack if desired; and
+4. explicitly delete the now-detached retained policy from Organizations.
+
+Never delete an attached policy merely to force a CloudFormation operation.
+
+## Local validation
+
+No AWS access is needed for static checks:
+
+```bash
+cfn-lint cloudformation/scp-guardrails.yaml
+bash -n deploy.sh
+```
+
+The template uses native YAML objects for `AWS::Organizations::Policy.Content`,
+so policy conditions can directly reference CloudFormation parameters without
+stringified JSON.
 
 ## Files
 
-```
+```text
 scp-guardrails/
 ├── README.md
 ├── deploy.sh
 └── cloudformation/
-    └── scp-guardrails.yaml      # AWS::Organizations::Policy x5 + attachment (single source of truth)
+    └── scp-guardrails.yaml
 ```
