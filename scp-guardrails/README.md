@@ -1,194 +1,237 @@
 # scp-guardrails
 
-Layered Service Control Policies (SCPs) for a personal AWS Organization. The
-design separates universal invariants (org root) from environment-specific cost
-prevention (OU-level), using two CloudFormation stacks. All policies are deployed
-**detached by default** and require explicit attachment.
+Layered Service Control Policies (SCPs) for a personal AWS Organization. Two
+functional layers: universally sensible guards at the org root, and one
+opinionated cost guard at the OU level. All policies are deployed **detached
+by default** and require explicit attachment.
 
-## Philosophy: prevention over remediation
+See the [root README](../README.md#design-philosophy-guardrails-for-the-agentic-age)
+for the high-level philosophy, tenets, and layered defense model.
+
+## Why SCPs for a home setup
 
 Budget alerts and cost quarantine react *after* money is spent. SCPs prevent
-the spend from ever starting. This matters in a home setup where:
+the spend from ever starting. This matters because:
 
-- **AI coding assistants make assumptions.** An agent optimizing for "production
-  readiness" will add a NAT Gateway, provision an ALB, or create an RDS instance
-  without thinking about whether a personal project needs $50+/month of always-on
-  infrastructure. One missing prompt, one trusting approval, and it's deployed.
-- **Accidental infinite loops exist.** EventBridge → Lambda → EventBridge cycles,
-  Step Functions retries, or recursive invocations can generate surprise bills
-  before CloudWatch alarms fire.
-- **Stolen credentials target expensive services.** Crypto miners want large
-  instances; data exfiltration uses NAT Gateways and endpoints. SCPs hard-deny
-  the attack surface.
-- **Idle resources accumulate.** A test ALB, a forgotten NAT Gateway, or a
-  "temporary" RDS instance quietly charges $30–$200/month indefinitely.
+- **AI coding assistants make enterprise assumptions.** One trusting "yes" and a
+  NAT Gateway, ALB, or CMK is deployed. SCPs make that physically impossible.
+- **Small charges accumulate.** $1 CMK + $3.60 EIP + $3 dashboard + $0.50 hosted
+  zone = $8/mo from four "negligible" resources. That's 40% of a $20 target.
+- **Prevention beats detection.** No CloudWatch alarm fires fast enough to catch
+  a resource that costs money the instant it exists.
+- **Credential theft targets expensive services.** SCPs deny the attack surface
+  at a level no compromised IAM role can override.
 
-The principle: if a resource type costs meaningful money just *existing*, and
-isn't needed for this setup's purpose, deny its creation at the organization
-level. No IAM policy, no human approval, no agent decision can override an SCP
-deny. This is the hardest possible guardrail short of not having an AWS account.
+## Architecture: two functional layers
 
-## Architecture: two layers, two stacks
+```text
+Organization root ─── Org-root baseline (universally sensible)
+├── Prod OU ───────── Opinionated cost guard (my choices)
+└── Test OU ───────── Opinionated cost guard (same policy)
+```
 
-### Layer 1: Org-root baseline (`scp-org-baseline.yaml`)
+### Layer 1: Org root — universally sensible (`scp-org-baseline.yaml`)
 
-Attached to the organization root. Applies to **all** member accounts regardless
-of OU. These are universal invariants that never need per-environment variation:
+Four policies that apply to **all** member accounts. No reasonable home setup
+would disagree with these. Fork-safe: keep them unchanged.
 
-| Policy | Purpose |
+| Policy | What it enforces |
 |---|---|
-| **Baseline security** | IMDSv2, EBS encryption, no IAM users/keys, no leave-org, protect quarantine role, protect S3 public access block |
-| **Region lock** | Single coarse boundary: 5 allowed regions. Fine-grained region policies live at OU level (future) |
-| **Service allowlist** | Only permit services we actually use. Everything else is hard-denied via `NotAction` |
-| **Cost commitments** | No reserved instances, capacity blocks, dedicated hosts, or dedicated tenancy |
+| **Baseline security** | IMDSv2, EBS encryption, no long-lived credentials, protect quarantine role |
+| **Region lock** | 5 allowed regions; global services exempted |
+| **Service allowlist** | Only permitted services exist; everything else is hard-denied |
+| **Cost commitments** | No reserved instances, capacity blocks, dedicated hosts/tenancy |
 
-The service allowlist is the most powerful policy: any AWS service not explicitly
-listed is completely blocked. This is a *subtractive* allowlist — it uses
-`NotAction` (services we allow) with `Effect: Deny`, meaning anything **not** in
-the list is denied. Adding a new service requires updating this policy.
+### Layer 2: OU level — opinionated (`scp-ou-policies.yaml`)
 
-**Services explicitly removed from the allowlist** (hard-denied by omission):
+One policy containing all "I don't want this but someone else might." Detach or
+customize if you fork this repository.
 
-| Service | Monthly cost if idle | Why denied |
-|---|---|---|
-| `elasticloadbalancing` (ALB/NLB) | $16+ | Use API Gateway + CloudFront instead |
-| `dax` (DynamoDB Accelerator) | $40+ | Unnecessary for home workloads |
-| `kinesis`, `firehose`, `kinesisanalytics`, `kinesisvideo` | $11+/shard | Per-shard hourly billing, dangerous at scale |
-| `rds` (all actions) | $15+ | Use DynamoDB or external databases |
-
-### Layer 2: OU-level policies (`scp-ou-policies.yaml`)
-
-Attached per OU. These deny **specific expensive resources within allowed
-services** — defense-in-depth where the allowlist provides the first barrier:
-
-| Policy | What it denies | Cost it prevents |
-|---|---|---|
-| **EC2 instance size** | Instances larger than nano/micro/small | Large instances: $50–$500+/mo |
-| **Networking cost guard** | NAT GW, ALB/NLB, TGW, Lattice, Network Firewall, Global Accelerator, VPN, interface VPC endpoints | $30–$350/mo per resource |
-| **Compute cost guard** | EKS, DAX, EMR, Batch, MSK, OpenSearch/AOSS | $50–$300/mo minimum |
-| **Storage & DB cost guard** | Provisioned IOPS, FSx, Storage Gateway, all RDS, ElastiCache, Redshift, Neptune, MemoryDB | $13–$200/mo per resource |
-
-**Defense-in-depth principle:** Some resources (ALB, DAX, RDS) are both removed
-from the org-level allowlist *and* explicitly denied at OU level. This protects
-against accidental allowlist expansion: even if someone adds
-`elasticloadbalancing:*` back to the allowlist, the OU-level networking guard
-still blocks ALB creation. Belt and suspenders.
-
-### What remains allowed (deliberately)
-
-| Resource | Why kept |
+| Policy | What it enforces |
 |---|---|
-| VPC + subnets + IGW + route tables | Free infrastructure |
-| Gateway VPC endpoints (S3, DynamoDB) | Free |
-| EC2 instances (nano/micro/small) | Core compute |
-| Lambda | Pay-per-use (risk acknowledged, future mitigation planned) |
-| Fargate | Pay-per-use, quarantine handles runaway |
-| ECS on EC2 | Size-limited by EC2 instance SCP |
-| DynamoDB | Pay-per-use, on-demand pricing |
-| S3 | Pay-per-use, egress is the risk |
-| CloudFront | Pay-per-use (risk noted, future mitigation planned) |
-| API Gateway | Pay-per-use |
-| EventBridge, Step Functions, SQS, SNS | Pay-per-use, negligible idle cost |
+| **Opinionated cost guard** | Instance sizes, networking, compute, storage, databases, death-by-a-thousand-cuts |
 
-## Policy parameters
+---
 
-### Org-root stack
+## Org-root: baseline security
 
-| Parameter | Default | Purpose |
+Denies all forms of long-lived credentials and protects security invariants:
+
+| Sid | What | Why |
 |---|---|---|
-| `OrgRootTargetId` | NONE | Organization root ID (`r-XXXX`) or NONE for detached |
-| `AllowedRegions` | 5 regions | Coarse region boundary |
-| `PolicyNamePrefix` | home-guardrail | Name prefix for all policies |
+| `RequireImdsv2OnLaunch` | EC2 must use IMDSv2 | Prevents SSRF credential theft |
+| `DenyExplicitImdsv1OnExisting` | Cannot downgrade to IMDSv1 | Same |
+| `DenyLeaveOrganization` | Cannot leave the org | Prevents policy evasion |
+| `DenyDisableEbsEncryptionByDefault` | Cannot turn off default encryption | Data protection |
+| `RequireEncryptedEbsVolumes` | All volumes must be encrypted | Data protection |
+| `ProtectS3AccountPublicAccessBlock` | Cannot change S3 public access block | Prevents exposure |
+| `DenyLongLivedCredentials` | No IAM users, access keys, SSH keys, service-specific creds, signing certs | **Only SSO sessions and service roles allowed** |
+| `ProtectQuarantineRemediationRole` | Cannot modify the quarantine role | Ensures cost remediation always works |
 
-### OU-level stack
+### Long-lived credential deny (detail)
 
-| Parameter | Default | Purpose |
+The `DenyLongLivedCredentials` statement blocks:
+- `iam:CreateUser` — no IAM users in workload accounts
+- `iam:CreateAccessKey` — no programmatic access keys
+- `iam:CreateLoginProfile` — no console passwords
+- `iam:CreateServiceSpecificCredential` — no CodeCommit HTTPS creds
+- `iam:UploadSSHPublicKey` — no SSH keys for CodeCommit
+- `iam:UploadSigningCertificate` — no X.509 signing certs
+
+**IAM Roles Anywhere** (`rolesanywhere:*`) is blocked by the service allowlist
+(not in the permitted list). Defense in depth: even if someone adds it to the
+allowlist, the credential deny blocks the underlying IAM operations.
+
+**What remains allowed:**
+- `iam:CreateRole` — services and CloudFormation need this
+- `iam:CreateServiceLinkedRole` — AWS services create these automatically
+- `iam:PutRolePolicy`, `iam:AttachRolePolicy` — normal role management
+- All STS operations — temporary credentials are the intended path
+
+## Org-root: service allowlist
+
+The most powerful policy. Uses `NotAction` + `Effect: Deny`: any service NOT
+listed is completely blocked. This is the primary deny layer.
+
+### Services allowed (by category)
+
+| Category | Namespaces | Notes |
 |---|---|---|
-| `Ec2InstanceSizeTargetIds` | NONE | OU IDs for EC2 size control |
-| `NetworkingCostGuardTargetIds` | NONE | OU IDs for networking cost guard |
-| `ComputeCostGuardTargetIds` | NONE | OU IDs for compute cost guard |
-| `StorageDbCostGuardTargetIds` | NONE | OU IDs for storage/database cost guard |
+| AI & ML | `bedrock`, `bedrock-agentcore`, `bedrock-mantle`, `aws-external-anthropic` | Core AI stack |
+| Serverless | `apigateway`, `execute-api`, `events`, `scheduler`, `pipes`, `lambda`, `states`, `sns`, `sqs` | Pay-per-use foundation |
+| Compute | `ec2`, `ec2messages`, `autoscaling`, `application-autoscaling`, `ecs`, `ecr`, `ecr-public` | Size-limited by OU policy |
+| Storage | `s3`, `s3files`, `dynamodb` | S3 Files is the NFS path to S3 (no EFS needed) |
+| Analytics | `athena`, `glue` (catalog only) | Glue limited to Data Catalog operations |
+| Networking | `cloudfront`, `route53`, `route53domains` | No ELB, no TGW, no VPN |
+| Security | `acm`, `cognito-idp`, `guardduty`, `iam`, `kms`, `sso`, `sso-directory`, `sso-oauth`, `identitystore`, `sts` | KMS allowed but CreateKey denied at OU |
+| Monitoring | `cloudformation`, `cloudshell`, `cloudtrail`, `cloudwatch`, `logs`, `resource-explorer-2`, `servicequotas`, `ssm`, `ssmmessages`, `tag`, `uxc` | Resource Explorer for visibility |
+| Developer | `codecommit` | Returned to GA Nov 2025 |
+| Billing | `account`, `artifact`, `aws-marketplace` (scoped), `aws-portal`, `bcm-data-exports`, `billing`, `budgets`, `ce`, `consolidatedbilling`, `cost-optimization-hub`, `cur`, `freetier`, `health`, `invoicing`, `organizations`, `payments`, `support`, `tax`, `trustedadvisor` | Management plane |
 
-Each parameter accepts comma-separated OU IDs. Default NONE leaves the policy
-detached. No identifiers are embedded in the repository.
+### Services hard-denied (by omission)
 
-## Deploy safely
+| Removed service | Monthly idle cost | Alternative |
+|---|---|---|
+| `elasticloadbalancing` (ALB/NLB) | $16+ | API Gateway + CloudFront |
+| `dax` (DynamoDB Accelerator) | $40+ | Not needed at home scale |
+| `kinesis`, `firehose`, `kinesisanalytics`, `kinesisvideo` | $11+/shard | SQS + EventBridge |
+| `rds` (all actions) | $15+ | DynamoDB |
+| `elasticfilesystem` (EFS) | $0.30/GB/mo | S3 Files (`s3files:*`) |
+| `apprunner` | $5+ even idle | Lambda + API GW |
+| `imagebuilder` | Launches instances | Pre-built AMIs |
+| `mediaconvert` | Per-minute billing | ffmpeg on EC2 |
+| `transcribe`, `translate` | Pay-per-use | Not needed |
+| `codebuild`, `codepipeline`, `codedeploy`, `codeartifact` | $1/pipeline/mo | GitHub Actions or local |
+| `cognito-identity`, `cognito-sync` | Legacy/unused | Cognito User Pools kept |
+| `s3-object-lambda` | Lambda per GET | Not needed |
+| `schemas` (EventBridge) | Discovery charges | Not needed |
+| `cloudfront-keyvaluestore` | Not using | Not needed |
+| `route53resolver` | $90/mo per endpoint | Not needed |
+| `ram` | Free but unused | Not needed now |
+| `supportplans` | Can upgrade tier | `support:*` kept for tickets |
+| `purchase-orders` | Unnecessary | Personal account |
+| `rolesanywhere` | Long-lived certs | Blocked — only SSO |
+| `eks`, `emr`, `kafka`, `es`, `aoss` | $50-300+/mo | Blocked at multiple levels |
 
-Prerequisites: AWS CLI v2, SCP policy type enabled, `FullAWSAccess` retained,
-and LandingZoneAdmin SSO credentials for the management account.
+## Org-root: region lock
 
-Create all policies detached:
+Single coarse boundary: deny all regional actions outside 5 regions. Global
+services (IAM, STS, Route 53, CloudFront, billing, etc.) are exempted.
 
+Default regions: `us-east-1`, `us-west-2`, `eu-central-1`, `eu-north-1`,
+`ap-southeast-1`.
+
+Future: fine-grained region policies at OU level (S3-only backup region,
+AI-only innovation regions) using the new Allow+Condition SCP language.
+
+## Org-root: cost commitments
+
+Blocks capacity purchases and dedicated tenancy:
+- Reserved instances, capacity blocks, host reservations, scheduled instances
+- Dedicated Hosts
+- `ec2:RunInstances` with non-default tenancy
+
+## OU-level: opinionated cost guard
+
+One policy, all the environment-specific boundaries. Organized by function:
+
+### Instance sizes
+- Deny `ec2:RunInstances` larger than `*.nano`, `*.micro`, `*.small`
+
+### Expensive networking
+- NAT Gateway, Transit Gateway, VPN, Client VPN, EIPs
+- ALB/NLB/Target Groups (defense-in-depth; also blocked by allowlist)
+- VPC Lattice, Network Firewall, Global Accelerator
+- Interface VPC endpoints (Gateway endpoints for S3/DynamoDB remain free)
+
+### Expensive compute
+- EKS (entire service), DAX, EMR, Batch, MSK, OpenSearch/AOSS
+- `kms:CreateKey` — AWS-managed keys are free and sufficient
+- `bedrock:CreateProvisionedModelThroughput` — use on-demand
+- `bedrock:CreateModelCustomizationJob` — fine-tuning is expensive
+- `lambda:PutProvisionedConcurrencyConfig` — pay-per-use is enough
+
+### CloudWatch dashboards (tag bypass)
+- Deny `cloudwatch:PutDashboard` unless tagged `CreatedBy: manual`
+- Agents won't know to add the tag; you do when intentional
+
+To create a dashboard manually:
+```bash
+aws cloudwatch put-dashboard --dashboard-name my-dashboard \
+  --dashboard-body file://dashboard.json \
+  --tags Key=CreatedBy,Value=manual
+```
+
+### Expensive storage and databases
+- Provisioned IOPS volumes (io1/io2) — use gp3
+- FSx, Storage Gateway
+- All RDS creation (defense-in-depth; also blocked by allowlist)
+- ElastiCache, Redshift, Neptune, MemoryDB
+- `s3:PutBucketAccelerateConfiguration` — use CloudFront instead
+- `cloudtrail:CreateTrail` — Event History (free, 90 days) is sufficient
+
+### SSM Advanced tier
+- Deny `ssm:PutParameter` with `ssm:parameterTier: Advanced`
+- Standard tier (4KB, 10K params, free) is sufficient
+
+## Deploy
+
+Prerequisites: AWS CLI v2, LandingZoneAdmin SSO profile, management account.
+
+Deploy detached (review policies before attaching):
 ```bash
 cd scp-guardrails
 ./deploy.sh
 ```
 
-Attach incrementally (example IDs, not real values):
-
+Deploy attached:
 ```bash
 ./deploy.sh \
   --org-root-id r-a1b2 \
-  --ec2-size-targets ou-abcd-11111111,ou-abcd-22222222 \
-  --networking-targets ou-abcd-11111111,ou-abcd-22222222 \
-  --compute-targets ou-abcd-11111111,ou-abcd-22222222 \
-  --storage-db-targets ou-abcd-11111111,ou-abcd-22222222
+  --opinionated-targets ou-abcd-11111111,ou-abcd-22222222
 ```
 
-The script:
-1. Validates all inputs (org root format, OU ID format, region format)
-2. Verifies caller is LandingZoneAdmin on the management account
-3. Shows the complete attachment plan
-4. Requires typing ATTACH for any non-NONE target
-5. Deploys org-root stack first, then OU-level stack
-
-For non-interactive use: `ATTACH_CONFIRMATION=ATTACH`.
-
-Omitted target options become NONE (detached). Running `./deploy.sh` with no
-arguments is a deliberate detach-all rollback.
-
-## Quarantine remediation role protection
-
-The baseline-security policy includes `ProtectQuarantineRemediationRole`: denies
-modification/deletion of `home-cost-quarantine-remediation` in workload accounts.
-Only the StackSet execution role (`stacksets-exec-*`) is exempted. This ensures
-the cost-quarantine state machines can always assume their cross-account role.
-
-## Effective policy behavior
-
-Keep AWS's default `FullAWSAccess` SCP attached everywhere. These policies only
-deny: they subtract permissions and never grant. Effective access is the
-intersection of all inherited SCPs. An explicit deny in *any* applicable SCP wins.
-
-AWS permits up to 10 SCPs per target (increased May 2026 from 5). Each policy
-can be up to 10,240 characters (increased from 5,120). This design uses 4
-policies at org root + 4 at OU level = 8 total per account, leaving headroom.
+The script verifies caller identity, validates all inputs, shows the attachment
+plan, and requires typing ATTACH for confirmation. Running with no target
+arguments detaches all policies (fast rollback).
 
 ## Rollback
 
-Fast rollback: rerun `./deploy.sh` without the affected target option. The
-management account is exempt from SCPs and can always detach a policy.
+Rerun `./deploy.sh` with no target arguments. The management account is exempt
+from SCPs and can always detach directly via Organizations if CloudFormation
+cannot complete.
 
-All policies have `DeletionPolicy: Retain`. Deleting a stack does not remove
-protections. To fully decommission: remove targets, verify, delete stack, then
-explicitly delete retained policies from Organizations.
+All policies have `DeletionPolicy: Retain`. Deleting the stack does not remove
+protections. To fully decommission: remove targets → verify → delete stack →
+delete retained policies from Organizations.
 
-## Migration from single-stack design
+## SCP language capabilities (since Sept 2025)
 
-The previous `scp-guardrails.yaml` (6 policies in one stack) remains in the
-repository. Migration path:
-
-1. Deploy new stacks detached alongside the existing stack
-2. Attach new policies one at a time, verify workload compatibility
-3. Detach equivalent old policies after new ones are proven
-4. Delete old stack; explicitly delete retained old policies
-
-## Validation
-
-```bash
-cfn-lint cloudformation/scp-org-baseline.yaml cloudformation/scp-ou-policies.yaml
-bash -n deploy.sh
-```
+SCPs now support full IAM policy language:
+- `NotResource` in Deny (restrict Bedrock to specific models)
+- Wildcards mid-string in Actions (`"ec2:*NatGateway*"`)
+- `Allow` with Conditions (fine-grained region-per-service policies)
+- 10 policies per target, 10,240 characters per policy (since May 2026)
 
 ## Files
 
@@ -197,41 +240,15 @@ scp-guardrails/
 ├── README.md
 ├── deploy.sh
 └── cloudformation/
-    ├── scp-org-baseline.yaml     # Org-root: security, regions, allowlist, commitments
-    ├── scp-ou-policies.yaml      # OU-level: EC2 size, networking, compute, storage/DB
-    └── scp-guardrails.yaml       # Legacy single-stack design (retained for migration)
+    ├── scp-org-baseline.yaml   # Org root: security, regions, allowlist, commitments
+    └── scp-ou-policies.yaml    # OU level: opinionated cost guard (one policy)
 ```
 
-## Future work (parked)
+## Future work
 
-- **Fine-grained region policies at OU level**: main region (full access),
-  S3-only backup region, list/describe/delete-only departing region, AI-only
-  innovation regions. Now feasible with Allow+Condition support (Sept 2025).
-- **Bedrock model restriction**: Use `NotResource` in Deny to restrict invocation
-  to approved model providers only (e.g., Anthropic Claude, Amazon Titan).
-  Enabled by full IAM language support in SCPs (Sept 2025).
-- **Death-by-a-thousand-cuts denies**: `kms:CreateKey` ($1/key/mo),
-  `ec2:AllocateAddress` ($3.60/EIP/mo), `cloudwatch:PutDashboard` ($3/mo),
-  `lambda:PutProvisionedConcurrencyConfig`, `bedrock:CreateProvisionedModelThroughput`,
-  `s3:PutBucketAccelerateConfiguration`, `cloudtrail:CreateTrail`,
-  `ssm:PutParameter` (Advanced tier via condition key).
-- **Future-proof wildcards**: Use mid-string wildcards (`"ec2:*NatGateway*"`,
-  `"ec2:*Vpn*"`, `"ec2:*TransitGateway*"`) to catch new AWS actions automatically.
-  Enabled by full IAM language support (Sept 2025).
-- **Lambda cost mitigation**: memory/concurrency limits via account-level settings
-  (no SCP condition key exists)
-- **CloudFront risk mitigation**: origin shield, WAF requirements, or
-  subscription-based protections
-
-## SCP language capabilities
-
-As of September 2025, SCPs support the full IAM policy language including:
-
-- `NotResource` in `Deny` statements (restrict Bedrock to specific models)
-- Wildcards anywhere in Action strings (`"ec2:*NatGateway*"`)
-- `Allow` with `Condition` (per-region per-service access)
-- `Allow` with specific `Resource` ARNs
-
-As of May 2026, quotas doubled: 10 policies per target, 10,240 characters per
-policy. This repository's design uses 8 policies per account (4 org-root + 4 OU),
-leaving headroom for future additions.
+- Fine-grained region policies at OU level (S3-only backup, AI innovation,
+  list/describe/delete departing region)
+- Bedrock model restriction via `NotResource`
+- Lambda runaway mitigation (account-level concurrency limits)
+- Mid-string wildcards for future-proof denies
+- CloudFront risk mitigation

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy SCP guardrails as two stacks from the Organizations management account.
-# Stack 1: org-root baseline (region lock, service allowlist, baseline security, cost commitments)
-# Stack 2: OU-level policies (EC2 size, networking, compute, storage/db cost guards)
+# Stack 1: org-root baseline (security, regions, service allowlist, cost commitments)
+# Stack 2: OU-level opinionated cost guard (one policy, all environment-specific boundaries)
 # With no target options, every policy is deployed detached.
 
 set -euo pipefail
@@ -16,10 +16,7 @@ OU_POLICIES_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-ou-policies.yaml"
 
 ORG_ROOT_ID="NONE"
 ALLOWED_REGIONS="us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1"
-EC2_INSTANCE_SIZE_TARGETS="NONE"
-NETWORKING_TARGETS="NONE"
-COMPUTE_TARGETS="NONE"
-STORAGE_DB_TARGETS="NONE"
+OPINIONATED_COST_TARGETS="NONE"
 
 usage() {
   cat <<'USAGE'
@@ -32,10 +29,7 @@ Org-root stack options:
   --allowed-regions CSV           Allowed regions (default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1)
 
 OU-level stack options:
-  --ec2-size-targets CSV          OU IDs for EC2 instance-size control
-  --networking-targets CSV        OU IDs for networking cost guard
-  --compute-targets CSV           OU IDs for compute cost guard
-  --storage-db-targets CSV        OU IDs for storage and database cost guard
+  --opinionated-targets CSV       OU IDs for the opinionated cost guard
 
 General:
   -h, --help                      Show this help
@@ -44,10 +38,7 @@ Examples:
   ./deploy.sh
   ./deploy.sh --org-root-id r-a1b2
   ./deploy.sh --org-root-id r-a1b2 \
-    --ec2-size-targets ou-abcd-11111111,ou-abcd-22222222 \
-    --networking-targets ou-abcd-11111111,ou-abcd-22222222 \
-    --compute-targets ou-abcd-11111111,ou-abcd-22222222 \
-    --storage-db-targets ou-abcd-11111111,ou-abcd-22222222
+    --opinionated-targets ou-abcd-11111111,ou-abcd-22222222
 
 Any attachment requires typing ATTACH at the prompt. For intentional
 non-interactive use, set ATTACH_CONFIRMATION=ATTACH.
@@ -68,14 +59,8 @@ while [[ $# -gt 0 ]]; do
       require_value "$@"; ORG_ROOT_ID="$2"; shift 2 ;;
     --allowed-regions)
       require_value "$@"; ALLOWED_REGIONS="$2"; shift 2 ;;
-    --ec2-size-targets)
-      require_value "$@"; EC2_INSTANCE_SIZE_TARGETS="$2"; shift 2 ;;
-    --networking-targets)
-      require_value "$@"; NETWORKING_TARGETS="$2"; shift 2 ;;
-    --compute-targets)
-      require_value "$@"; COMPUTE_TARGETS="$2"; shift 2 ;;
-    --storage-db-targets)
-      require_value "$@"; STORAGE_DB_TARGETS="$2"; shift 2 ;;
+    --opinionated-targets)
+      require_value "$@"; OPINIONATED_COST_TARGETS="$2"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -122,10 +107,7 @@ validate_regions() {
 }
 
 validate_org_root_id "$ORG_ROOT_ID"
-validate_ou_targets "EC2 size" "$EC2_INSTANCE_SIZE_TARGETS"
-validate_ou_targets "networking" "$NETWORKING_TARGETS"
-validate_ou_targets "compute" "$COMPUTE_TARGETS"
-validate_ou_targets "storage-db" "$STORAGE_DB_TARGETS"
+validate_ou_targets "opinionated cost guard" "$OPINIONATED_COST_TARGETS"
 validate_regions "allowed" "$ALLOWED_REGIONS"
 
 read -r CALLER_ACCOUNT CALLER_ARN CALLER_USER_ID < <(
@@ -153,17 +135,11 @@ fi
 echo "Verified Organizations management account: $MANAGEMENT_ACCOUNT"
 
 printf '\nAttachment plan (NONE means detached):\n'
-printf '\n  Org-root baseline stack (%s):\n' "$ORG_BASELINE_STACK"
-printf '    Org root target:   %s (regions: %s)\n' "$ORG_ROOT_ID" "$ALLOWED_REGIONS"
-printf '\n  OU policies stack (%s):\n' "$OU_POLICIES_STACK"
-printf '    EC2 size control:        %s\n' "$EC2_INSTANCE_SIZE_TARGETS"
-printf '    Networking cost guard:   %s\n' "$NETWORKING_TARGETS"
-printf '    Compute cost guard:      %s\n' "$COMPUTE_TARGETS"
-printf '    Storage/DB cost guard:   %s\n' "$STORAGE_DB_TARGETS"
+printf '  Org-root baseline:       %s (regions: %s)\n' "$ORG_ROOT_ID" "$ALLOWED_REGIONS"
+printf '  Opinionated cost guard:  %s\n' "$OPINIONATED_COST_TARGETS"
 
 HAS_ATTACHMENTS=false
-for targets in "$ORG_ROOT_ID" "$EC2_INSTANCE_SIZE_TARGETS" \
-  "$NETWORKING_TARGETS" "$COMPUTE_TARGETS" "$STORAGE_DB_TARGETS"; do
+for targets in "$ORG_ROOT_ID" "$OPINIONATED_COST_TARGETS"; do
   if [[ "$targets" != "NONE" ]]; then
     HAS_ATTACHMENTS=true
     break
@@ -188,7 +164,7 @@ else
 fi
 
 echo ""
-echo "Deploying org-root baseline stack '$ORG_BASELINE_STACK' in '$REGION'..."
+echo "Deploying org-root baseline stack '$ORG_BASELINE_STACK'..."
 aws cloudformation deploy \
   --stack-name "$ORG_BASELINE_STACK" \
   --template-file "$ORG_BASELINE_TEMPLATE" \
@@ -199,15 +175,10 @@ aws cloudformation deploy \
     "AllowedRegions=$ALLOWED_REGIONS" \
     "OrgRootTargetId=$ORG_ROOT_ID"
 
-echo "Org-root baseline stack deployed. Policy IDs:"
-aws cloudformation describe-stacks \
-  --stack-name "$ORG_BASELINE_STACK" \
-  --region "$REGION" \
-  --query 'Stacks[0].Outputs[].{Policy:OutputKey,Id:OutputValue}' \
-  --output table
+echo "Org-root baseline deployed."
 
 echo ""
-echo "Deploying OU policies stack '$OU_POLICIES_STACK' in '$REGION'..."
+echo "Deploying OU policies stack '$OU_POLICIES_STACK'..."
 aws cloudformation deploy \
   --stack-name "$OU_POLICIES_STACK" \
   --template-file "$OU_POLICIES_TEMPLATE" \
@@ -215,17 +186,18 @@ aws cloudformation deploy \
   --no-fail-on-empty-changeset \
   --parameter-overrides \
     "PolicyNamePrefix=$POLICY_NAME_PREFIX" \
-    "Ec2InstanceSizeTargetIds=$EC2_INSTANCE_SIZE_TARGETS" \
-    "NetworkingCostGuardTargetIds=$NETWORKING_TARGETS" \
-    "ComputeCostGuardTargetIds=$COMPUTE_TARGETS" \
-    "StorageDbCostGuardTargetIds=$STORAGE_DB_TARGETS"
+    "OpinionatedCostGuardTargetIds=$OPINIONATED_COST_TARGETS"
 
-echo "OU policies stack deployed. Policy IDs:"
+echo "OU policies deployed."
+echo ""
+echo "Policy IDs:"
+aws cloudformation describe-stacks \
+  --stack-name "$ORG_BASELINE_STACK" \
+  --region "$REGION" \
+  --query 'Stacks[0].Outputs[].{Policy:OutputKey,Id:OutputValue}' \
+  --output table
 aws cloudformation describe-stacks \
   --stack-name "$OU_POLICIES_STACK" \
   --region "$REGION" \
   --query 'Stacks[0].Outputs[].{Policy:OutputKey,Id:OutputValue}' \
   --output table
-
-echo ""
-echo "Both stacks deployed successfully."

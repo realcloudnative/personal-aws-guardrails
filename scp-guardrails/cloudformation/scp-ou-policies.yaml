@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  OU-level SCP guardrails: EC2 instance size, networking cost guard, compute
-  cost guard, and storage/database cost guard. Deploy from the management
-  account with per-policy OU targets.
+  Opinionated OU-level cost guard: all environment-specific cost boundaries in
+  one policy. These are choices specific to this home setup — someone forking
+  this repository might disagree and customize or detach this policy. Deploy
+  from the management account.
 
 Parameters:
   PolicyNamePrefix:
@@ -11,48 +12,31 @@ Parameters:
     AllowedPattern: "^[A-Za-z0-9_-]{1,40}$"
     Description: Generic policy-name prefix.
 
-  Ec2InstanceSizeTargetIds:
+  OpinionatedCostGuardTargetIds:
     Type: String
     Default: NONE
     AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
-    Description: Comma-separated OU IDs for the EC2 instance-size control, or NONE.
-
-  NetworkingCostGuardTargetIds:
-    Type: String
-    Default: NONE
-    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
-    Description: Comma-separated OU IDs for the networking cost guard, or NONE.
-
-  ComputeCostGuardTargetIds:
-    Type: String
-    Default: NONE
-    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
-    Description: Comma-separated OU IDs for the compute cost guard, or NONE.
-
-  StorageDbCostGuardTargetIds:
-    Type: String
-    Default: NONE
-    AllowedPattern: "^(NONE|ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}(,ou-[a-z0-9]{4,32}-[a-z0-9]{8,32})*)$"
-    Description: Comma-separated OU IDs for the storage and database cost guard, or NONE.
+    Description: Comma-separated OU IDs for the opinionated cost guard, or NONE to leave detached.
 
 Conditions:
-  AttachEc2InstanceSize: !Not [!Equals [!Ref Ec2InstanceSizeTargetIds, NONE]]
-  AttachNetworkingCostGuard: !Not [!Equals [!Ref NetworkingCostGuardTargetIds, NONE]]
-  AttachComputeCostGuard: !Not [!Equals [!Ref ComputeCostGuardTargetIds, NONE]]
-  AttachStorageDbCostGuard: !Not [!Equals [!Ref StorageDbCostGuardTargetIds, NONE]]
+  AttachOpinionatedCostGuard: !Not [!Equals [!Ref OpinionatedCostGuardTargetIds, NONE]]
 
 Resources:
-  Ec2InstanceSizePolicy:
+  OpinionatedCostGuardPolicy:
     Type: AWS::Organizations::Policy
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Name: !Sub ${PolicyNamePrefix}-ec2-instance-size
+      Name: !Sub ${PolicyNamePrefix}-opinionated-cost-guard
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny launching EC2 instances larger than nano, micro, or small.
+      Description: >
+        Opinionated cost boundaries for this home setup: instance sizes,
+        expensive networking, compute services, storage, databases, and
+        death-by-a-thousand-cuts resource creation. Fork-friendly: detach
+        or customize if you disagree.
       TargetIds: !If
-        - AttachEc2InstanceSize
-        - !Split [",", !Ref Ec2InstanceSizeTargetIds]
+        - AttachOpinionatedCostGuard
+        - !Split [",", !Ref OpinionatedCostGuardTargetIds]
         - !Ref AWS::NoValue
       Tags:
         - Key: project
@@ -64,6 +48,7 @@ Resources:
       Content:
         Version: "2012-10-17"
         Statement:
+          # --- Instance size ---
           - Sid: DenyEc2LargerThanSmall
             Effect: Deny
             Action: ec2:RunInstances
@@ -74,44 +59,23 @@ Resources:
                   - "*.nano"
                   - "*.micro"
                   - "*.small"
-
-  NetworkingCostGuardPolicy:
-    Type: AWS::Organizations::Policy
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Name: !Sub ${PolicyNamePrefix}-networking-cost-guard
-      Type: SERVICE_CONTROL_POLICY
-      Description: Deny expensive networking resources (NAT GW, ALB/NLB, TGW, Lattice, Network Firewall, Global Accelerator, VPN, Interface VPC endpoints).
-      TargetIds: !If
-        - AttachNetworkingCostGuard
-        - !Split [",", !Ref NetworkingCostGuardTargetIds]
-        - !Ref AWS::NoValue
-      Tags:
-        - Key: project
-          Value: cloud-mgmt
-        - Key: component
-          Value: scp-guardrails
-        - Key: managed-by
-          Value: cloudformation
-      Content:
-        Version: "2012-10-17"
-        Statement:
+          # --- Expensive networking ---
           - Sid: DenyExpensiveNetworking
             Effect: Deny
             Action:
               - ec2:CreateNatGateway
-              - elasticloadbalancing:CreateLoadBalancer
-              - elasticloadbalancing:CreateTargetGroup
               - ec2:CreateTransitGateway
               - ec2:CreateTransitGatewayVpcAttachment
+              - ec2:CreateVpnGateway
+              - ec2:CreateVpnConnection
+              - ec2:CreateClientVpnEndpoint
+              - ec2:AllocateAddress
+              - elasticloadbalancing:CreateLoadBalancer
+              - elasticloadbalancing:CreateTargetGroup
               - vpc-lattice:CreateService
               - vpc-lattice:CreateServiceNetwork
               - network-firewall:CreateFirewall
               - globalaccelerator:CreateAccelerator
-              - ec2:CreateVpnGateway
-              - ec2:CreateVpnConnection
-              - ec2:CreateClientVpnEndpoint
             Resource: "*"
           - Sid: DenyInterfaceVpcEndpoints
             Effect: Deny
@@ -120,29 +84,7 @@ Resources:
             Condition:
               StringNotEquals:
                 ec2:VpcEndpointType: Gateway
-
-  ComputeCostGuardPolicy:
-    Type: AWS::Organizations::Policy
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Name: !Sub ${PolicyNamePrefix}-compute-cost-guard
-      Type: SERVICE_CONTROL_POLICY
-      Description: Deny expensive compute services (EKS, DAX, EMR, Batch, MSK, OpenSearch/AOSS).
-      TargetIds: !If
-        - AttachComputeCostGuard
-        - !Split [",", !Ref ComputeCostGuardTargetIds]
-        - !Ref AWS::NoValue
-      Tags:
-        - Key: project
-          Value: cloud-mgmt
-        - Key: component
-          Value: scp-guardrails
-        - Key: managed-by
-          Value: cloudformation
-      Content:
-        Version: "2012-10-17"
-        Statement:
+          # --- Expensive compute ---
           - Sid: DenyExpensiveCompute
             Effect: Deny
             Action:
@@ -156,30 +98,20 @@ Resources:
               - es:CreateDomain
               - es:CreateElasticsearchDomain
               - aoss:CreateCollection
+              - kms:CreateKey
+              - bedrock:CreateProvisionedModelThroughput
+              - bedrock:CreateModelCustomizationJob
+              - lambda:PutProvisionedConcurrencyConfig
             Resource: "*"
-
-  StorageDbCostGuardPolicy:
-    Type: AWS::Organizations::Policy
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Name: !Sub ${PolicyNamePrefix}-storage-db-cost-guard
-      Type: SERVICE_CONTROL_POLICY
-      Description: Deny expensive storage (provisioned IOPS, FSx, Storage Gateway) and all managed databases (RDS, ElastiCache, Redshift, Neptune, MemoryDB).
-      TargetIds: !If
-        - AttachStorageDbCostGuard
-        - !Split [",", !Ref StorageDbCostGuardTargetIds]
-        - !Ref AWS::NoValue
-      Tags:
-        - Key: project
-          Value: cloud-mgmt
-        - Key: component
-          Value: scp-guardrails
-        - Key: managed-by
-          Value: cloudformation
-      Content:
-        Version: "2012-10-17"
-        Statement:
+          # --- Dashboards: tag bypass for intentional creation ---
+          - Sid: DenyUntaggedDashboards
+            Effect: Deny
+            Action: cloudwatch:PutDashboard
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:RequestTag/CreatedBy: manual
+          # --- Expensive storage volumes ---
           - Sid: DenyProvisionedIopsVolumes
             Effect: Deny
             Action: ec2:CreateVolume
@@ -198,6 +130,7 @@ Resources:
                 ec2:VolumeType:
                   - io1
                   - io2
+          # --- Expensive storage services and all databases ---
           - Sid: DenyExpensiveStorageAndDatabases
             Effect: Deny
             Action:
@@ -214,18 +147,19 @@ Resources:
               - neptune:CreateDBInstance
               - neptune:CreateDBCluster
               - memorydb:CreateCluster
+              - s3:PutBucketAccelerateConfiguration
+              - cloudtrail:CreateTrail
             Resource: "*"
+          # --- SSM Advanced tier parameters ---
+          - Sid: DenySsmAdvancedTier
+            Effect: Deny
+            Action: ssm:PutParameter
+            Resource: "*"
+            Condition:
+              StringEquals:
+                ssm:parameterTier: Advanced
 
 Outputs:
-  Ec2InstanceSizePolicyId:
-    Description: Policy ID of the EC2 instance-size SCP.
-    Value: !Ref Ec2InstanceSizePolicy
-  NetworkingCostGuardPolicyId:
-    Description: Policy ID of the networking cost guard SCP.
-    Value: !Ref NetworkingCostGuardPolicy
-  ComputeCostGuardPolicyId:
-    Description: Policy ID of the compute cost guard SCP.
-    Value: !Ref ComputeCostGuardPolicy
-  StorageDbCostGuardPolicyId:
-    Description: Policy ID of the storage and database cost guard SCP.
-    Value: !Ref StorageDbCostGuardPolicy
+  OpinionatedCostGuardPolicyId:
+    Description: Policy ID of the opinionated cost guard SCP.
+    Value: !Ref OpinionatedCostGuardPolicy

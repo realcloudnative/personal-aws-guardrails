@@ -30,23 +30,62 @@ setup targeting a $20/month total, five unnecessary resources can double the bil
 Prevention at the organization level is the only defense that works against both
 catastrophic mistakes and death by a thousand cuts.
 
-The layered defense model:
+### Tenets
 
-1. **SCPs (hardest boundary):** Organization-level service and resource denials
-   that no IAM policy, no agent, and no human in a workload account can override.
-   If a resource type costs meaningful money just *existing* and isn't needed,
-   its creation is denied at the organization level.
-2. **Budget actions (automatic containment):** When spend thresholds are breached,
-   an SCP immediately blocks further resource creation and a state machine stops
-   what's already running.
-3. **Remediation (damage control):** Multi-region Step Functions that scale ECS
-   services to zero, ASG groups to zero, and stop standalone EC2 instances.
-4. **Identity separation:** Management and workload use different users, different
-   sessions, different permission boundaries.
+1. **Prefer downtime over runaway bills.** This is a personal account, not a
+   business. Brief unavailability costs nothing; forgotten infrastructure costs
+   real money every hour.
+2. **Deny by default, allow by exception.** Services that are not explicitly
+   needed do not exist. Resources that cost money just existing cannot be created.
+3. **Two layers of SCPs.** Coarse-grained guards at the organization root are
+   universally sensible — no reasonable home setup needs NAT Gateways or EKS.
+   Fine-grained guards at the OU level are opinionated — someone forking this
+   repository might disagree and customize them.
+4. **No long-lived credentials, anywhere.** IAM users, access keys, SSH keys,
+   service-specific credentials, and IAM Roles Anywhere are all hard-denied.
+   The only authentication paths are SSO temporary sessions and service roles.
+5. **Defense in depth.** Removing a service from the allowlist is the primary
+   deny. Explicit action denies in the OU-level policy are the secondary deny.
+   Budget actions and quarantine remediation are the final safety nets.
 
-This order is deliberate: prevention → containment → remediation → isolation.
-Each layer catches what the previous one missed. The goal is to prefer brief
-downtime over runaway bills — this is a home setup paid from a personal account.
+### Layered defense model
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer 1: SCPs (hardest boundary, org root + OU)                 │
+│   Cannot be overridden by any IAM policy, agent, or human.      │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 2: Budget actions (automatic containment)                  │
+│   SCP blocks new resource creation when thresholds breach.       │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 3: Remediation (damage control)                            │
+│   Step Functions scale ECS→0, ASG→0, stop EC2 instances.         │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer 4: Identity separation                                     │
+│   Management and workload use different users and sessions.      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### SCP architecture: two functional layers
+
+The [`scp-guardrails`](./scp-guardrails) component splits policy into two
+stacks with a clear philosophical boundary:
+
+**Org root (universally sensible):** Security invariants, region boundaries, the
+service allowlist, and capacity-commitment denies. These apply to every member
+account. If you fork this repository for your own home setup, you'd keep these
+unchanged. They prevent universally wasteful or dangerous actions: unencrypted
+volumes, services you don't use, regions you don't operate in, reserved-instance
+purchases, and all forms of long-lived credentials.
+
+**OU level (opinionated for this setup):** One policy containing all the "I don't
+want this exposure, but someone else might disagree" boundaries. Instance sizes,
+NAT Gateways, EIPs, CMK creation, load balancers, provisioned throughput, managed
+databases, and more. These are choices — a different home setup might allow RDS or
+larger instances. Detach or customize this policy to match your needs.
+
+See [`scp-guardrails/README.md`](./scp-guardrails/README.md) for the full
+service-by-service rationale and bypass documentation.
 
 ## Target organization and identities
 

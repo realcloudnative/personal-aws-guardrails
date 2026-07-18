@@ -86,12 +86,15 @@ Resources:
               - s3:PutAccountPublicAccessBlock
               - s3:DeleteAccountPublicAccessBlock
             Resource: "*"
-          - Sid: DenyIamUsersAndAccessKeys
+          - Sid: DenyLongLivedCredentials
             Effect: Deny
             Action:
               - iam:CreateUser
               - iam:CreateAccessKey
               - iam:CreateLoginProfile
+              - iam:CreateServiceSpecificCredential
+              - iam:UploadSSHPublicKey
+              - iam:UploadSigningCertificate
             Resource: "*"
           - Sid: ProtectQuarantineRemediationRole
             Effect: Deny
@@ -189,20 +192,34 @@ Resources:
           - Sid: DenyServicesNotInAllowlist
             Effect: Deny
             NotAction:
+              # --- AI & ML ---
               - bedrock:*
               - bedrock-agentcore:*
               - bedrock-mantle:*
               - aws-external-anthropic:*
-              - aws-marketplace:Subscribe
-              - aws-marketplace:ViewSubscriptions
-              - events:*
-              - scheduler:*
-              - schemas:*
-              - pipes:*
-              - transcribe:*
-              - translate:*
+              # --- Serverless & Integration ---
               - apigateway:*
               - execute-api:*
+              - events:*
+              - scheduler:*
+              - pipes:*
+              - lambda:*
+              - states:*
+              - sns:*
+              - sqs:*
+              # --- Compute ---
+              - ec2:*
+              - ec2messages:*
+              - autoscaling:*
+              - application-autoscaling:*
+              - ecs:*
+              - ecr:*
+              - ecr-public:*
+              # --- Storage ---
+              - s3:*
+              - s3files:*
+              - dynamodb:*
+              # --- Data & Analytics ---
               - athena:*
               - glue:GetDatabase
               - glue:GetDatabases
@@ -220,76 +237,56 @@ Resources:
               - glue:UpdatePartition
               - glue:DeletePartition
               - glue:BatchDeletePartition
-              - apprunner:*
-              - artifact:*
-              - health:*
-              - organizations:*
-              - aws-portal:*
-              - billing:*
-              - account:*
-              - ce:*
-              - cur:*
-              - budgets:*
-              - consolidatedbilling:*
-              - freetier:*
-              - invoicing:*
-              - payments:*
-              - tax:*
-              - bcm-data-exports:*
-              - cost-optimization-hub:*
-              - purchase-orders:*
-              - acm:*
-              - cloudformation:*
+              # --- Networking & DNS ---
               - cloudfront:*
-              - cloudfront-keyvaluestore:*
+              - route53:*
+              - route53domains:*
+              # --- Security & Identity ---
+              - acm:*
+              - cognito-idp:*
+              - guardduty:*
+              - iam:*
+              - kms:*
+              - sso:*
+              - sso-directory:*
+              - sso-oauth:*
+              - identitystore:*
+              - sts:*
+              # --- Monitoring & Operations ---
+              - cloudformation:*
               - cloudshell:*
               - cloudtrail:*
               - cloudwatch:*
               - logs:*
-              - codeartifact:*
-              - codebuild:*
-              - codecommit:*
-              - codedeploy:*
-              - codepipeline:*
-              - cognito-idp:*
-              - cognito-identity:*
-              - cognito-sync:*
-              - dynamodb:*
-              - ec2:*
-              - ec2messages:*
-              - imagebuilder:*
-              - elasticfilesystem:*
-              - autoscaling:*
-              - application-autoscaling:*
-              - ecr:*
-              - ecr-public:*
-              - ecs:*
-              - guardduty:*
-              - iam:*
-              - sso:*
-              - sso-directory:*
-              - identitystore:*
-              - sso-oauth:*
-              - kms:*
-              - lambda:*
-              - mediaconvert:*
-              - ram:*
-              - route53:*
-              - route53domains:*
-              - route53resolver:*
-              - s3:*
-              - s3-object-lambda:*
+              - resource-explorer-2:*
               - servicequotas:*
-              - sns:*
-              - sqs:*
-              - states:*
               - ssm:*
               - ssmmessages:*
-              - trustedadvisor:*
-              - support:*
-              - supportplans:*
-              - sts:*
               - tag:*
+              - uxc:*
+              # --- Developer Tools ---
+              - codecommit:*
+              # --- Billing & Account (management plane) ---
+              - account:*
+              - artifact:*
+              - aws-marketplace:Subscribe
+              - aws-marketplace:ViewSubscriptions
+              - aws-portal:*
+              - bcm-data-exports:*
+              - billing:*
+              - budgets:*
+              - ce:*
+              - consolidatedbilling:*
+              - cost-optimization-hub:*
+              - cur:*
+              - freetier:*
+              - health:*
+              - invoicing:*
+              - organizations:*
+              - payments:*
+              - support:*
+              - tax:*
+              - trustedadvisor:*
             Resource: "*"
           - Sid: DenyMarketplaceSubscribeOutsideBedrockMantle
             Effect: Deny
