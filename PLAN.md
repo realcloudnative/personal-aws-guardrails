@@ -181,14 +181,75 @@ the allowlist as the most AWS-native git service for IAM-integrated workflows.
 
 | Action to deny | Service | Monthly cost prevented | Notes |
 |---|---|---|---|
+| `kms:CreateKey` | KMS | $1/key/mo (accumulates fast) | AWS-managed keys (`aws/ebs`, `aws/s3`, etc.) remain free and provide default encryption everywhere. No CMK needed for home use. |
+| `ec2:AllocateAddress` | EC2 | $3.60/EIP/mo (since Feb 2024) | All EIPs now cost money whether attached or not. Use API GW/CloudFront/instance public IPs instead. |
+| `cloudwatch:PutDashboard` | CloudWatch | $3/dashboard/mo | Deny unless tagged `CreatedBy: manual`. Agents reflexively create dashboards. Documented bypass for intentional use. |
 | `bedrock:CreateProvisionedModelThroughput` | Bedrock | $thousands | Provisioned throughput is enterprise-only pricing |
 | `bedrock:CreateModelCustomizationJob` | Bedrock | $hundreds-thousands | Fine-tuning jobs are expensive |
 | `lambda:PutProvisionedConcurrencyConfig` | Lambda | $50+/mo per allocation | Provisioned concurrency charges even when idle |
 | `s3:PutBucketAccelerateConfiguration` | S3 | $0.04-0.08/GB transferred | Transfer Acceleration charges per GB |
 | `route53resolver:CreateResolverEndpoint` | Route 53 | $90/mo per endpoint pair | If keeping namespace in allowlist |
 | `cloudtrail:CreateTrail` | CloudTrail | $2-50+/mo | Prevent accidental trail creation; Event History is free |
-| `ec2:AllocateAddress` | EC2 | $3.60/mo per unused EIP | Since Feb 2024, all EIPs cost money. Consider denying or monitoring. |
 | `elasticfilesystem:CreateFileSystem` | EFS | $0.30/GB/mo | If keeping namespace in allowlist |
+| `ssm:PutParameter` (Advanced tier) | SSM | $0.05/param/mo | Use `ssm:ParameterTier` condition key to deny Advanced; Standard tier (4KB, free) suffices |
+
+#### KMS: why deny CreateKey but keep kms:* in the allowlist
+
+Services need `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, etc. to use
+encryption. AWS-managed keys (aliases like `aws/ebs`, `aws/s3`) are:
+- Created automatically by the service on first use
+- Free ($0/month, no per-request charges for integrated service operations)
+- Sufficient for all home encryption needs
+
+Customer-managed keys (CMKs) add: key rotation control, cross-account access,
+custom key policies. None of these matter for a home setup. What they do add:
+$1/month/key, forever, even if unused. AI agents create them reflexively because
+enterprise best practices say "use CMKs for compliance and auditing."
+
+**Deny `kms:CreateKey`. Keep `kms:*` for everything else.** If you later need a
+CMK for a specific purpose, temporarily lift the deny from the management account.
+
+#### CloudWatch Dashboards: tag-based bypass
+
+The deny on `cloudwatch:PutDashboard` uses a condition to allow dashboards tagged
+with `CreatedBy: manual`. This stops agents from creating dashboards (they won't
+know to add the tag) while allowing intentional human creation:
+
+```yaml
+- Sid: DenyUntaggedDashboards
+  Effect: Deny
+  Action: cloudwatch:PutDashboard
+  Resource: "*"
+  Condition:
+    StringNotEquals:
+      aws:RequestTag/CreatedBy: manual
+```
+
+To create a dashboard manually, include the tag:
+```bash
+aws cloudwatch put-dashboard --dashboard-name my-dashboard \
+  --dashboard-body '...' \
+  --tags Key=CreatedBy,Value=manual
+```
+
+This is not watertight security — it's a speed bump that catches lazy agents
+while preserving human override. Document the tag in your runbook.
+
+#### Route 53 Hosted Zones: allow but limit
+
+Hosted zones at $0.50/mo are low-risk since creation is an involved action that
+agents rarely do autonomously. No SCP deny needed. Monitor via budget alerts
+if zone count grows unexpectedly. If a `route53:CreateHostedZone` limit becomes
+desirable, a condition on `route53:HostedZoneCount` does not exist — this would
+need monitoring rather than prevention.
+
+#### Elastic IPs: why hard-deny
+
+Since February 2024, ALL Elastic IPs cost $3.60/month — whether attached to a
+running instance or not. Previously only *unattached* EIPs were charged. For a
+home setup using API Gateway + CloudFront + instance auto-assigned public IPs,
+there is no need for EIPs. Agents allocate them "just in case" or when setting
+up NAT Gateways (already denied). Hard deny `ec2:AllocateAddress`.
 
 ### Parked for deeper research
 

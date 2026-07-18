@@ -206,9 +206,32 @@ scp-guardrails/
 
 - **Fine-grained region policies at OU level**: main region (full access),
   S3-only backup region, list/describe/delete-only departing region, AI-only
-  innovation regions
-- **Lambda cost mitigation**: memory/concurrency limits via SCP conditions
-  (pending condition key availability)
+  innovation regions. Now feasible with Allow+Condition support (Sept 2025).
+- **Bedrock model restriction**: Use `NotResource` in Deny to restrict invocation
+  to approved model providers only (e.g., Anthropic Claude, Amazon Titan).
+  Enabled by full IAM language support in SCPs (Sept 2025).
+- **Death-by-a-thousand-cuts denies**: `kms:CreateKey` ($1/key/mo),
+  `ec2:AllocateAddress` ($3.60/EIP/mo), `cloudwatch:PutDashboard` ($3/mo),
+  `lambda:PutProvisionedConcurrencyConfig`, `bedrock:CreateProvisionedModelThroughput`,
+  `s3:PutBucketAccelerateConfiguration`, `cloudtrail:CreateTrail`,
+  `ssm:PutParameter` (Advanced tier via condition key).
+- **Future-proof wildcards**: Use mid-string wildcards (`"ec2:*NatGateway*"`,
+  `"ec2:*Vpn*"`, `"ec2:*TransitGateway*"`) to catch new AWS actions automatically.
+  Enabled by full IAM language support (Sept 2025).
+- **Lambda cost mitigation**: memory/concurrency limits via account-level settings
+  (no SCP condition key exists)
 - **CloudFront risk mitigation**: origin shield, WAF requirements, or
   subscription-based protections
-- **Fargate re-evaluation**: keep or deny based on usage patterns
+
+## SCP language capabilities
+
+As of September 2025, SCPs support the full IAM policy language including:
+
+- `NotResource` in `Deny` statements (restrict Bedrock to specific models)
+- Wildcards anywhere in Action strings (`"ec2:*NatGateway*"`)
+- `Allow` with `Condition` (per-region per-service access)
+- `Allow` with specific `Resource` ARNs
+
+As of May 2026, quotas doubled: 10 policies per target, 10,240 characters per
+policy. This repository's design uses 8 policies per account (4 org-root + 4 OU),
+leaving headroom for future additions.

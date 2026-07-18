@@ -22,6 +22,14 @@ Application Load Balancer, and an RDS instance — all reasonable in a business
 context, all costing $50–200/month idle in a personal one. One missing prompt,
 one trusting "yes", and it's deployed. Budget alarms fire hours later.
 
+The damage is not always dramatic. Agents also create KMS customer-managed keys
+($1/month each, forever), allocate Elastic IPs ($3.60/month since February 2024),
+provision CloudWatch dashboards ($3/month), and enable "best-practice" features
+that have recurring charges. Individually negligible in an enterprise; in a home
+setup targeting a $20/month total, five unnecessary resources can double the bill.
+Prevention at the organization level is the only defense that works against both
+catastrophic mistakes and death by a thousand cuts.
+
 The layered defense model:
 
 1. **SCPs (hardest boundary):** Organization-level service and resource denials
