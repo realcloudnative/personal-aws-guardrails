@@ -1,6 +1,6 @@
-# AWS Cost Guardrails for the Agentic Age
+# Personal AWS Guardrails
 
-**Keep AI-assisted cloud experimentation within the realities of a personal budget.**
+**A cost-conscious home landing zone for the agentic age.**
 
 Your coding agent offers to “make this production-ready.” It adds a NAT Gateway,
 an Application Load Balancer, an RDS instance, several KMS customer-managed
@@ -17,8 +17,18 @@ multi-region Step Functions stop supported resources that are already running.
 > [!WARNING]
 > This is risk reduction, not a watertight spending cap. Guardrails are better
 > than no guardrails, and a contained incident is better than an uncontained one—but
-> either can still cost money. Read [What this does not solve](#what-this-does-not-solve)
-> before relying on the controls.
+> either can still cost money.
+>
+> This project was written with AI assistance and is offered as a starting point,
+> not a prescription for every AWS account. Some controls address uncommon or
+> expensive failure scenarios that are impractical to exercise exhaustively.
+> Inventory your existing resources, policies, identities, and stacks before
+> deployment: these defaults may conflict with workloads you already operate.
+>
+> The intended workflow is agent-assisted: use your own coding agent to inventory,
+> customize, stage, and verify the controls for your accounts. You remain
+> responsible for the resulting architecture, approvals, recovery path, and bill.
+> Read [What this does not solve](#what-this-does-not-solve) before relying on it.
 
 ```console
 $ aws ec2 create-nat-gateway --subnet-id subnet-abc123
