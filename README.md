@@ -36,18 +36,21 @@ multi-region Step Functions stop supported resources that are already running.
 
 ## Why this exists
 
-Most cloud guardrails assume either stolen credentials or a person making a
-mistake. I also want to account for automation acting with exactly the permissions
-I gave it. I use coding agents to build infrastructure, and they often reach for
-familiar enterprise defaults: high availability, managed services, dedicated
-networking, and extra monitoring. Those choices may be perfectly reasonable at
-work; at home, they can add a recurring bill without making the project more
-useful. The failure is usually mundane: a cost instruction drops out of context,
-one expensive resource hides in a large generated change, or a retry loop runs
-longer than expected. By the time billing data catches up, the API calls have
-already succeeded. An SCP turns a preference into an API boundary: if an agent
-attempts a denied pattern, AWS rejects the request before the resource exists,
-so the agent must use a cheaper design or stop and ask.
+Most cloud guardrails are built around two assumptions: credentials may be
+stolen, or a person may make a mistake. I want to cover a third, increasingly
+ordinary case—automation acting with permissions I deliberately granted, but
+producing infrastructure I did not actually mean to approve. Coding agents tend
+to reach for patterns that are sensible at work: high availability, managed
+services, dedicated networking, and additional monitoring. In a personal AWS
+account, those choices can create a baseline bill without making the project
+more useful.
+
+The cause is often mundane. A cost instruction falls out of context, an expensive
+resource is buried in generated infrastructure code, or a retry loop runs longer
+than expected. Billing data arrives after the API calls have succeeded. An SCP
+turns a preference into an API boundary: when an agent attempts a denied pattern,
+AWS rejects the request before the resource exists, leaving the agent to choose a
+cheaper design or stop and ask.
 
 ## Who this is for
 
