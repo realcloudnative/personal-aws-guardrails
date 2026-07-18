@@ -36,24 +36,23 @@ multi-region Step Functions stop supported resources that are already running.
 
 ## Why this exists
 
-Traditional cloud guardrails focus on malicious actors and human mistakes. AI
-coding agents add a third risk model: software can use valid administrator
-permissions, follow familiar “best practices,” and create exactly the wrong
-architecture for someone paying personally.
+Most cloud guardrails assume either stolen credentials or a person making a
+mistake. I also want to account for automation acting with exactly the permissions
+I gave it.
 
-The agent is not malicious. It may not even be technically wrong. It is optimizing
-for availability, scalability, or enterprise convention rather than your monthly
-budget. Prompt instructions and code review help, but neither is a hard boundary:
+I use coding agents to build infrastructure. They often reach for familiar
+enterprise defaults: high availability, managed services, dedicated networking,
+and extra monitoring. Those choices may be perfectly reasonable at work. At
+home, they can add a recurring bill without making the project more useful.
 
-- the instruction may be missing, ambiguous, or forgotten in a later session;
-- a lower-cost model may make a plausible but expensive assumption;
-- generated infrastructure may hide one costly line in a large change;
-- an approved workflow can create resources faster than billing data arrives;
-- retries, loops, and event chains can amplify a small mistake.
+The failure is usually mundane. A cost instruction drops out of context. A large
+generated change hides one expensive resource. A retry loop runs longer than
+expected. By the time billing data catches up, the API calls have already
+succeeded.
 
-An SCP deny runs before the API operation succeeds. The expensive resource never
-exists. The agent receives an error and must choose a cheaper design or ask for
-an explicit exception.
+An SCP turns a preference into an API boundary. If an agent attempts a denied
+pattern, AWS rejects the request before the resource exists. The agent must use a
+cheaper design or stop and ask.
 
 ## Who this is for
 
