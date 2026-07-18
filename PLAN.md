@@ -162,20 +162,58 @@ agentic-age-aware.
 | Namespace | Reason |
 |---|---|
 | `cognito-sync:*` | Deprecated. Legacy mobile sync. |
+| `transcribe:*` | No longer needed. |
+| `translate:*` | Used in the past, no longer needed. |
+| `mediaconvert:*` | Niche. Use ffmpeg on EC2 if needed. |
+| `apprunner:*` | $5/mo minimum per service idle. Use Lambda + API GW. |
+| `imagebuilder:*` | Rarely needed. Use pre-built AMIs or containers. |
+| `schemas:*` | EventBridge Schema Registry. Not used. |
+| `s3-object-lambda:*` | Not used. |
+| `elasticfilesystem:*` | Not needed. S3 Files (`s3files:*`) works independently (EFS managed by AWS internally). |
+| `route53resolver:*` | Resolver endpoints $90/mo. DNS Firewall not needed at home. |
+| `cloudfront-keyvaluestore:*` | Not using CloudFront KV Store. |
+| `cognito-identity:*` | Federated identity pools not needed. |
+| `codebuild:*` | Not using. GitHub Actions or local builds suffice. |
+| `codepipeline:*` | Not using. |
+| `codedeploy:*` | Not using. |
+| `codeartifact:*` | Not using. |
+| `purchase-orders:*` | Unnecessary for personal account. |
+| `supportplans:*` | Prevents accidental support tier upgrade. `support:*` still allows tickets/quota increases. |
+| `ram:*` | Resource sharing not needed for home. |
+
+### Services to ADD to the allowlist
+
+| Namespace | Reason |
+|---|---|
+| `s3files:*` | S3 Files — shared file system access to S3 data. New service (2025). Does NOT require `elasticfilesystem` permissions. |
+| `resource-explorer-2:*` | Resource Explorer — free, cross-region resource inventory/discovery. Essential for visibility. |
+| `uxc:*` | Console account color/label customization. Free. Useful for visual safety (color-code Test vs Prod). |
+
+### S3 Files vs EFS clarification
+
+S3 Files is built on EFS infrastructure internally, but uses its own IAM namespace
+(`s3files:`). You do NOT need `elasticfilesystem:*` in your allowlist to use S3
+Files. The EFS resources are managed by the S3 Files service itself. Key actions:
+- `s3files:CreateFileSystem` — creates the file system view of an S3 bucket/prefix
+- `s3files:ClientMount` — mounts on compute (Lambda, EC2, ECS, Fargate)
+- `s3files:ClientWrite` — write access via mount
+- `s3files:ClientRootAccess` — root-level file operations
 
 **Note:** `codecommit:*` was initially flagged for removal based on the July 2024
 deprecation. AWS reversed this in November 2025 — CodeCommit returned to full GA
 with active investment (Git LFS Q1 2026, regional expansion Q3 2026). It stays in
 the allowlist as the most AWS-native git service for IAM-integrated workflows.
 
-### Strong candidates for removal
+### Confirmed keeps
 
-| Namespace | Reason | Risk if removed |
-|---|---|---|
-| `elasticfilesystem:*` | $0.30/GB/mo standard; grows unbounded; S3 is cheaper for most use cases | Can't mount NFS in Lambda/Fargate (some ML workloads use it) |
-| `route53resolver:*` | Resolver endpoints cost $90/mo; DNS Firewall is cheap but rarely needed at home | Lose ability to create DNS Firewall rules (minimal loss) |
-| `apprunner:*` | Minimum $5/mo per service even idle; Lambda/API GW is better for home | Can't use App Runner (use Lambda + API GW instead) |
-| `mediaconvert:*` | Niche; pay-per-use but easy to accidentally transcode large video | Can't transcode video (use ffmpeg on EC2 if needed) |
+| Namespace | Reason |
+|---|---|
+| `bedrock:*` + `bedrock-agentcore:*` + `bedrock-mantle:*` + `aws-external-anthropic:*` | Core AI/LLM stack |
+| `ecr-public:*` | Pulling public images; minimal cost |
+| `cognito-idp:*` | User Pools for auth; first 50K MAU free |
+| `codecommit:*` | Returned to GA Nov 2025; AWS-native git |
+| `route53domains:*` | Domain registration; active use |
+| `route53:*` | DNS hosting; active use; $0.50/zone acceptable |
 
 ### New OU-level denies to add (defense-in-depth within allowed services)
 
