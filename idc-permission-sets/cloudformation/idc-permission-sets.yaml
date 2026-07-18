@@ -102,7 +102,7 @@ Resources:
               - organizations:ListPoliciesForTarget
               - organizations:ListTargetsForPolicy
               - sts:AssumeRole
-              - lambda:InvokeFunction
+              - events:PutEvents
               - states:StartExecution
               - logs:CreateLogGroup
               - logs:CreateLogStream
@@ -188,18 +188,6 @@ Resources:
               ]
             },
             {
-              "Sid": "ManageQuarantineFunctions",
-              "Effect": "Allow",
-              "Action": [
-                "lambda:CreateFunction", "lambda:DeleteFunction",
-                "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration",
-                "lambda:AddPermission", "lambda:RemovePermission",
-                "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency",
-                "lambda:TagResource", "lambda:UntagResource"
-              ],
-              "Resource": "arn:${AWS::Partition}:lambda:*:${ManagementAccountId}:function:home-cost-quarantine-*"
-            },
-            {
               "Sid": "ManageQuarantineStateMachine",
               "Effect": "Allow",
               "Action": [
@@ -220,6 +208,18 @@ Resources:
                 "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*",
                 "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*:*"
               ]
+            },
+            {
+              "Sid": "ManageQuarantineEventRules",
+              "Effect": "Allow",
+              "Action": [
+                "events:PutRule", "events:DeleteRule",
+                "events:PutTargets", "events:RemoveTargets",
+                "events:DescribeRule", "events:ListTargetsByRule",
+                "events:EnableRule", "events:DisableRule",
+                "events:TagResource", "events:UntagResource"
+              ],
+              "Resource": "arn:${AWS::Partition}:events:*:${ManagementAccountId}:rule/home-cost-quarantine-*"
             },
             {
               "Sid": "ApplyAccountBaselineSettings",
@@ -245,9 +245,9 @@ Resources:
               "Action": "iam:CreateRole",
               "Resource": [
                 "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {
@@ -273,9 +273,9 @@ Resources:
               ],
               "Resource": [
                 "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
               ]
             },
             {
@@ -284,9 +284,9 @@ Resources:
               "Action": "iam:PutRolePermissionsBoundary",
               "Resource": [
                 "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {
@@ -300,24 +300,10 @@ Resources:
               "Action": "iam:DeleteRolePermissionsBoundary",
               "Resource": [
                 "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
               ]
-            },
-            {
-              "Sid": "AttachOnlyLambdaBasicExecutionPolicy",
-              "Effect": "Allow",
-              "Action": ["iam:AttachRolePolicy", "iam:DetachRolePolicy"],
-              "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
-              ],
-              "Condition": {
-                "ArnEquals": {
-                  "iam:PolicyARN": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-                }
-              }
             },
             {
               "Sid": "PassOnlyBoundedQuarantineRoles",
@@ -325,15 +311,15 @@ Resources:
               "Action": "iam:PassRole",
               "Resource": [
                 "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-remediator",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {
                   "iam:PassedToService": [
                     "budgets.amazonaws.com",
-                    "lambda.amazonaws.com",
+                    "events.amazonaws.com",
                     "states.amazonaws.com"
                   ]
                 }

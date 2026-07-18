@@ -22,6 +22,14 @@ Parameters:
     AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
     Description: Cross-account role name in the Test account.
 
+  RegionalExecutionRoleArn:
+    Type: String
+    Description: ARN of the global IAM execution role deployed by the management stack.
+
+  RegionalTriggerRoleArn:
+    Type: String
+    Description: ARN of the global IAM trigger role deployed by the management stack.
+
   QuarantineRoleBoundaryArn:
     Type: String
     AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/home-cost-quarantine-role-boundary$"
@@ -40,48 +48,6 @@ Resources:
       LogGroupName: !Sub /aws/vendedlogs/states/home-cost-quarantine-regional-${AWS::Region}
       RetentionInDays: 30
 
-  RegionalExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: home-cost-quarantine-regional-states
-      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
-      Description: !Sub Regional remediation state machine execution role (${AWS::Region}).
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: states.amazonaws.com
-            Action: sts:AssumeRole
-            Condition:
-              StringEquals:
-                aws:SourceAccount: !Ref AWS::AccountId
-              ArnLike:
-                aws:SourceArn: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
-      Policies:
-        - PolicyName: assume-test-remediation-role
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: sts:AssumeRole
-                Resource: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
-        - PolicyName: logging
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogDelivery
-                  - logs:GetLogDelivery
-                  - logs:UpdateLogDelivery
-                  - logs:DeleteLogDelivery
-                  - logs:ListLogDeliveries
-                  - logs:PutResourcePolicy
-                  - logs:DescribeResourcePolicies
-                  - logs:DescribeLogGroups
-                Resource: "*"
-
   RegionalStateMachine:
     Type: AWS::StepFunctions::StateMachine
     DeletionPolicy: Retain
@@ -94,7 +60,7 @@ Resources:
     Properties:
       StateMachineName: home-cost-quarantine-regional
       StateMachineType: STANDARD
-      RoleArn: !GetAtt RegionalExecutionRole.Arn
+      RoleArn: !Ref RegionalExecutionRoleArn
       LoggingConfiguration:
         Destinations:
           - CloudWatchLogsLogGroup:
@@ -134,7 +100,7 @@ Resources:
             Next: Ec2StopCheck
           Ec2StopCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: Ec2StopInstances
                 Condition: "{% $count($ec2Instances) > 0 %}"
             Default: Ec2PaginateCheck
@@ -159,7 +125,7 @@ Resources:
             Next: Ec2PaginateCheck
           Ec2PaginateCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: Ec2DescribeInstancesPage
                 Condition: "{% $exists($ec2NextToken) and $ec2NextToken != null %}"
             Default: AsgDescribeGroups
@@ -208,7 +174,7 @@ Resources:
             Next: AsgScaleCheck
           AsgScaleCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: AsgScaleGroups
                 Condition: "{% $count($asgGroups) > 0 %}"
             Default: AsgPaginateCheck
@@ -248,7 +214,7 @@ Resources:
             Next: AsgPaginateCheck
           AsgPaginateCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: AsgDescribeGroupsPage
                 Condition: "{% $exists($asgNextToken) and $asgNextToken != null %}"
             Default: EcsListClusters
@@ -293,7 +259,7 @@ Resources:
             Next: EcsClusterCheck
           EcsClusterCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: EcsProcessClusters
                 Condition: "{% $count($ecsClusters) > 0 %}"
             Default: EcsClusterPaginateCheck
@@ -329,7 +295,7 @@ Resources:
                   Next: EcsServiceCheck
                 EcsServiceCheck:
                   Type: Choice
-                  Rules:
+                  Choices:
                     - Next: EcsScaleServices
                       Condition: "{% $count($ecsServices) > 0 %}"
                   Default: EcsServicePaginateCheck
@@ -369,7 +335,7 @@ Resources:
                   Next: EcsServicePaginateCheck
                 EcsServicePaginateCheck:
                   Type: Choice
-                  Rules:
+                  Choices:
                     - Next: EcsListServicesPage
                       Condition: "{% $exists($ecsServiceNextToken) and $ecsServiceNextToken != null %}"
                   Default: EcsClusterDone
@@ -400,7 +366,7 @@ Resources:
             Next: EcsClusterPaginateCheck
           EcsClusterPaginateCheck:
             Type: Choice
-            Rules:
+            Choices:
               - Next: EcsListClustersPage
                 Condition: "{% $exists($ecsClusterNextToken) and $ecsClusterNextToken != null %}"
             Default: Done
@@ -427,31 +393,6 @@ Resources:
           Done:
             Type: Succeed
 
-  RegionalTriggerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: home-cost-quarantine-regional-trigger
-      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
-      Description: Allows EventBridge to start the regional remediation state machine.
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sts:AssumeRole
-            Condition:
-              StringEquals:
-                aws:SourceAccount: !Ref AWS::AccountId
-      Policies:
-        - PolicyName: start-regional-state-machine
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: states:StartExecution
-                Resource: !Ref RegionalStateMachine
-
   RegionalTriggerRule:
     Type: AWS::Events::Rule
     Properties:
@@ -471,10 +412,8 @@ Resources:
       Targets:
         - Id: start-regional-remediation
           Arn: !Ref RegionalStateMachine
-          RoleArn: !GetAtt RegionalTriggerRole.Arn
+          RoleArn: !Ref RegionalTriggerRoleArn
 
 Outputs:
   RegionalStateMachineArn:
     Value: !Ref RegionalStateMachine
-  RegionalExecutionRoleArn:
-    Value: !GetAtt RegionalExecutionRole.Arn

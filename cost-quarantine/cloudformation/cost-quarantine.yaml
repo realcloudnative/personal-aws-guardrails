@@ -254,6 +254,75 @@ Resources:
   # StackSet-deployed state machine that picks up the event and remediates
   # locally. The forwarding also covers us-east-1 itself.
 
+  RegionalExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: EnableRemediationResources
+    Properties:
+      RoleName: home-cost-quarantine-regional-states
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Global execution role for per-region remediation state machines.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
+      Policies:
+        - PolicyName: assume-test-remediation-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+        - PolicyName: logging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  RegionalTriggerRole:
+    Type: AWS::IAM::Role
+    Condition: EnableRemediationResources
+    Properties:
+      RoleName: home-cost-quarantine-regional-trigger
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Allows EventBridge in any Region to start the regional remediation state machine.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: start-regional-state-machine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
+
   EventForwardingRole:
     Type: AWS::IAM::Role
     Condition: EnableRemediationResources
@@ -305,9 +374,6 @@ Resources:
             BudgetName:
               - !Ref TestBudgetName
       Targets:
-        - Id: forward-us-east-1
-          Arn: !Sub arn:${AWS::Partition}:events:us-east-1:${AWS::AccountId}:event-bus/default
-          RoleArn: !GetAtt EventForwardingRole.Arn
         - Id: forward-us-west-2
           Arn: !Sub arn:${AWS::Partition}:events:us-west-2:${AWS::AccountId}:event-bus/default
           RoleArn: !GetAtt EventForwardingRole.Arn

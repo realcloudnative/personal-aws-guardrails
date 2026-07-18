@@ -128,8 +128,7 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
       --parameters \
         "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
         "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
-      --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" \
-      --regions "$REGION" || true
+      --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" || true
   else
     aws cloudformation create-stack-set \
       --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
@@ -182,25 +181,64 @@ aws cloudformation describe-stacks \
   --output table
 
 if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
-  printf '\nDeploying regional remediation stacks to: %s\n' "$REMEDIATION_REGIONS"
+  printf '\nDeploying regional remediation via self-managed StackSet "%s"...\n' "$REGIONAL_STACKSET_NAME"
 
   IFS=',' read -r -a region_array <<< "$REMEDIATION_REGIONS"
+  regional_role_arn="arn:aws:iam::${management_account_id}:role/home-cost-quarantine-regional-states"
+  regional_trigger_role_arn="arn:aws:iam::${management_account_id}:role/home-cost-quarantine-regional-trigger"
+  regional_template_body="$(cat "$REGIONAL_TEMPLATE")"
+  admin_role_arn="arn:aws:iam::${management_account_id}:role/AWSCloudFormationStackSetAdministrationRole"
 
-  for target_region in "${region_array[@]}"; do
-    printf '  %s...\n' "$target_region"
-    aws cloudformation deploy \
-      --profile "$MANAGEMENT_PROFILE" \
-      --region "$target_region" \
-      --stack-name home-cost-quarantine-regional \
-      --template-file "$REGIONAL_TEMPLATE" \
+  if aws cloudformation describe-stack-set \
+      --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" >/dev/null 2>&1; then
+    printf '  Updating existing StackSet...\n'
+    aws cloudformation update-stack-set \
+      --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --template-body "$regional_template_body" \
       --capabilities CAPABILITY_NAMED_IAM \
-      --no-fail-on-empty-changeset \
-      --parameter-overrides \
-        "TestAccountId=$TEST_ACCOUNT_ID" \
-        "ManagementAccountId=$management_account_id" \
-        "TestRemediationRoleName=$TEST_REMEDIATION_ROLE_NAME" \
-        "QuarantineRoleBoundaryArn=$QUARANTINE_BOUNDARY_ARN"
-  done
+      --permission-model SELF_MANAGED \
+      --administration-role-arn "$admin_role_arn" \
+      --execution-role-name AWSCloudFormationStackSetExecutionRole \
+      --parameters \
+        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
+        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
+        "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
+        "ParameterKey=RegionalExecutionRoleArn,ParameterValue=$regional_role_arn" \
+        "ParameterKey=RegionalTriggerRoleArn,ParameterValue=$regional_trigger_role_arn" \
+        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN" \
+      --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" \
+      --regions "${region_array[@]}" \
+      --accounts "$management_account_id" || true
+  else
+    printf '  Creating new StackSet...\n'
+    aws cloudformation create-stack-set \
+      --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --template-body "$regional_template_body" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --permission-model SELF_MANAGED \
+      --administration-role-arn "$admin_role_arn" \
+      --execution-role-name AWSCloudFormationStackSetExecutionRole \
+      --parameters \
+        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
+        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
+        "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
+        "ParameterKey=RegionalExecutionRoleArn,ParameterValue=$regional_role_arn" \
+        "ParameterKey=RegionalTriggerRoleArn,ParameterValue=$regional_trigger_role_arn" \
+        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN"
 
-  printf '\nAll regional remediation stacks deployed.\n'
+    printf '  Creating stack instances in all remediation Regions...\n'
+    aws cloudformation create-stack-instances \
+      --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --regions "${region_array[@]}" \
+      --accounts "$management_account_id" \
+      --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0"
+  fi
+
+  printf '\n  StackSet operation submitted. Monitor with:\n'
+  printf '    aws cloudformation list-stack-set-operations --stack-set-name %s --region %s\n' \
+    "$REGIONAL_STACKSET_NAME" "$REGION"
 fi
