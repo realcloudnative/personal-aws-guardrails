@@ -210,11 +210,78 @@ agentic-age-aware.
 
 ---
 
+## New SCP language capabilities (Sept 2025)
+
+Reference: [AWS blog — SCPs now support full IAM language](https://aws.amazon.com/blogs/security/unlock-new-possibilities-aws-organizations-service-control-policy-now-supports-full-iam-language/)
+
+Since Sept 2025, SCPs support the **full IAM policy language**. This changes
+what's achievable:
+
+### Newly supported constructs
+
+| Capability | What it enables for us |
+|---|---|
+| `NotResource` in `Deny` | Deny Bedrock model invocation on everything *except* approved models (e.g., only Anthropic Claude) |
+| Wildcards mid-string in `Action` | `"ec2:*NatGateway*"` catches current AND future NAT Gateway actions; `"ec2:*Vpn*"` future-proofs VPN deny |
+| `Allow` with `Condition` | Fine-grained region policies: "allow S3 only in eu-north-1", "allow only List/Describe/Delete in ap-southeast-1" — cleaner than Deny + StringNotEquals |
+| `Allow` with specific `Resource` ARNs | Scope service access to specific resources (e.g., only certain Bedrock models) |
+| `NotAction` in `Allow` | "Allow everything except these expensive actions" — though AWS recommends Deny-first approach |
+
+### What this unlocks (previously assessed as impossible/hard)
+
+| Problem | Previous assessment | New approach |
+|---|---|---|
+| Restrict Bedrock to approved model providers only | Not SCP-enforceable | `Deny` on `bedrock:InvokeModel*` with `NotResource: arn:aws:bedrock:*::foundation-model/anthropic.*` |
+| Fine-grained per-region service access (OU level) | Required complex Deny/NotEquals for each combination | `Allow` with `Condition: aws:RequestedRegion` per service group — one clean policy per OU |
+| Future-proof expensive resource denies | Denied specific actions; new AWS actions could slip through | Mid-string wildcards: `"ec2:*NatGateway*"`, `"ec2:*TransitGateway*"`, `"ec2:*Vpn*"` |
+| Deny all ELB actions future-proof | Denied `Create*` only | `"elasticloadbalancing:*"` was removed from allowlist, but for defense-in-depth: mid-string wildcards catch any new namespace additions |
+| S3-only backup region | Needed separate region-lock + separate S3 exception | Single `Allow` with condition scoping S3 to that region, no other services |
+
+### What remains NOT SCP-fixable (regardless of language)
+
+These are limited by the absence of condition keys, not by policy language:
+
+| Problem | Why still impossible | Mitigation |
+|---|---|---|
+| Lambda memory limit | No `lambda:MemorySize` condition key in SCPs | Account-level concurrency limit; budget alerts |
+| Lambda concurrency explosion | No key for runtime concurrency count | Account-level unreserved concurrency = 10 (configurable) |
+| DynamoDB force on-demand mode | No `dynamodb:BillingMode` condition key | IAM policy per role; budget alerts |
+| CodeBuild large compute types | No `codebuild:ComputeType` condition key | IAM policy per role |
+| CloudWatch Logs ingestion volume | No key for log volume | Retention policies; budget alerts |
+| S3 egress cost | GET requests cause egress; no way to SCP-limit reads | VPC endpoint policies; CloudFront; budget alerts |
+
+### Impact on our fine-grained region strategy
+
+The `Allow` with `Condition` capability makes the OU-level region strategy much
+cleaner. Instead of multiple overlapping Deny statements, we can write:
+
+```json
+{
+  "Sid": "AllowS3OnlyInBackupRegion",
+  "Effect": "Allow",
+  "Action": "s3:*",
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": { "aws:RequestedRegion": "eu-north-1" }
+  }
+}
+```
+
+Combined with a tight base Allow (no wildcard `"*"` Allow), this gives us
+per-region per-service control. However, AWS recommends caution: overlapping
+Allow statements can accidentally widen access. The safest pattern remains:
+broad Allow + targeted Deny. For our region use case, we should likely keep the
+Deny-based approach for the coarse region lock at org root and use Allow-with-
+condition only at OU level where we need service-specific region exceptions.
+
+---
+
 ## Proposed execution order
 
-1. **Quick wins**: Remove `codecommit`, `cognito-sync` from allowlist
+1. **Quick wins**: Remove `codecommit`, `cognito-sync` from allowlist; upgrade networking denies to mid-string wildcards (`"ec2:*NatGateway*"`, `"ec2:*Vpn*"`, `"ec2:*TransitGateway*"`)
 2. **Evaluate removals**: Decide on `elasticfilesystem`, `route53resolver`, `apprunner`, `mediaconvert`
-3. **Add OU-level denies**: Bedrock provisioned throughput, Lambda provisioned concurrency, S3 Transfer Acceleration, CloudTrail trail creation, EFS creation (if kept in allowlist), Route 53 resolver endpoints (if kept)
-4. **Fine-grained region policies**: Implement the OU-level region differentiation (main region, S3-only backup, list/describe/delete departing, AI innovation)
-5. **Lambda deep-dive**: Research account-level concurrency limits and whether they can be SCP-protected
-6. **CloudFront risk**: Evaluate subscription models and WAF requirements
+3. **Bedrock model restriction**: Use `NotResource` to restrict model invocation to approved providers only (e.g., Anthropic, Amazon)
+4. **Add OU-level denies**: Bedrock provisioned throughput, Lambda provisioned concurrency, S3 Transfer Acceleration, CloudTrail trail creation, EFS creation (if kept in allowlist), Route 53 resolver endpoints (if kept)
+5. **Fine-grained region policies**: Implement OU-level region differentiation using Allow+Condition for service-specific region scoping (S3-only backup region, AI-only innovation regions, list/describe/delete-only departing regions)
+6. **Lambda deep-dive**: Research account-level concurrency limits and whether they can be SCP-protected from modification
+7. **CloudFront risk**: Evaluate subscription models and WAF requirements
