@@ -424,6 +424,19 @@ Resources:
               - iam:CreateAccessKey
               - iam:CreateLoginProfile
             Resource: "*"
+          - Sid: ProtectQuarantineRemediationRole
+            Effect: Deny
+            Action:
+              - iam:DeleteRole
+              - iam:DeleteRolePolicy
+              - iam:PutRolePolicy
+              - iam:UpdateAssumeRolePolicy
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+            Resource: arn:aws:iam::*:role/home-cost-quarantine-remediation
+            Condition:
+              ArnNotLike:
+                aws:PrincipalArn: arn:aws:iam::*:role/stacksets-exec-*
 
   CostControlPolicy:
     Type: AWS::Organizations::Policy
