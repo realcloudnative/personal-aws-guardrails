@@ -1,46 +1,53 @@
 #!/usr/bin/env bash
-# Deploy independently targeted SCP guardrails from the Organizations management account.
+# Deploy SCP guardrails as two stacks from the Organizations management account.
+# Stack 1: org-root baseline (region lock, service allowlist, baseline security, cost commitments)
+# Stack 2: OU-level policies (EC2 size, networking, compute, storage/db cost guards)
 # With no target options, every policy is deployed detached.
 
 set -euo pipefail
 
-STACK_NAME="${STACK_NAME:-home-scp-guardrails}"
+ORG_BASELINE_STACK="${ORG_BASELINE_STACK:-home-scp-org-baseline}"
+OU_POLICIES_STACK="${OU_POLICIES_STACK:-home-scp-ou-policies}"
 REGION="${REGION:-us-east-1}"
 POLICY_NAME_PREFIX="${POLICY_NAME_PREFIX:-home-guardrail}"
-TEMPLATE="$(cd "$(dirname "$0")" && pwd)/cloudformation/scp-guardrails.yaml"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ORG_BASELINE_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-org-baseline.yaml"
+OU_POLICIES_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-ou-policies.yaml"
 
-PROD_REGION_TARGETS="NONE"
-TEST_REGION_TARGETS="NONE"
-SERVICE_ALLOWLIST_TARGETS="NONE"
+ORG_ROOT_ID="NONE"
+ALLOWED_REGIONS="us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1"
 EC2_INSTANCE_SIZE_TARGETS="NONE"
-BASELINE_SECURITY_TARGETS="NONE"
-COST_CONTROL_TARGETS="NONE"
-PROD_REGIONS="us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1"
-TEST_REGIONS="us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1"
+NETWORKING_TARGETS="NONE"
+COMPUTE_TARGETS="NONE"
+STORAGE_DB_TARGETS="NONE"
 
 usage() {
   cat <<'USAGE'
 Usage: ./deploy.sh [options]
 
-No target options creates or updates the stack with all policies detached.
-Only OU IDs are accepted; attaching guardrails to the organization root is not supported.
+No target options creates or updates both stacks with all policies detached.
 
-Options:
-  --prod-region-targets CSV       OU IDs for the Prod region lock
-  --test-region-targets CSV       OU IDs for the Test region lock
-  --service-allowlist-targets CSV OU IDs for the service allowlist
-  --ec2-size-targets CSV          OU IDs for the EC2 instance-size control
-  --baseline-targets CSV          OU IDs for common baseline security
-  --cost-control-targets CSV      OU IDs for cost controls
-  --prod-regions CSV              Prod allowed regions
-  --test-regions CSV              Test allowed regions
+Org-root stack options:
+  --org-root-id ID                Organization root ID (r-XXXX) for baseline policies
+  --allowed-regions CSV           Allowed regions (default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1)
+
+OU-level stack options:
+  --ec2-size-targets CSV          OU IDs for EC2 instance-size control
+  --networking-targets CSV        OU IDs for networking cost guard
+  --compute-targets CSV           OU IDs for compute cost guard
+  --storage-db-targets CSV        OU IDs for storage and database cost guard
+
+General:
   -h, --help                      Show this help
 
 Examples:
   ./deploy.sh
-  ./deploy.sh --prod-region-targets ou-abcd-11111111 \
-    --test-region-targets ou-abcd-22222222 \
-    --baseline-targets ou-abcd-11111111,ou-abcd-22222222
+  ./deploy.sh --org-root-id r-a1b2
+  ./deploy.sh --org-root-id r-a1b2 \
+    --ec2-size-targets ou-abcd-11111111,ou-abcd-22222222 \
+    --networking-targets ou-abcd-11111111,ou-abcd-22222222 \
+    --compute-targets ou-abcd-11111111,ou-abcd-22222222 \
+    --storage-db-targets ou-abcd-11111111,ou-abcd-22222222
 
 Any attachment requires typing ATTACH at the prompt. For intentional
 non-interactive use, set ATTACH_CONFIRMATION=ATTACH.
@@ -57,22 +64,18 @@ require_value() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prod-region-targets)
-      require_value "$@"; PROD_REGION_TARGETS="$2"; shift 2 ;;
-    --test-region-targets)
-      require_value "$@"; TEST_REGION_TARGETS="$2"; shift 2 ;;
-    --service-allowlist-targets)
-      require_value "$@"; SERVICE_ALLOWLIST_TARGETS="$2"; shift 2 ;;
+    --org-root-id)
+      require_value "$@"; ORG_ROOT_ID="$2"; shift 2 ;;
+    --allowed-regions)
+      require_value "$@"; ALLOWED_REGIONS="$2"; shift 2 ;;
     --ec2-size-targets)
       require_value "$@"; EC2_INSTANCE_SIZE_TARGETS="$2"; shift 2 ;;
-    --baseline-targets)
-      require_value "$@"; BASELINE_SECURITY_TARGETS="$2"; shift 2 ;;
-    --cost-control-targets)
-      require_value "$@"; COST_CONTROL_TARGETS="$2"; shift 2 ;;
-    --prod-regions)
-      require_value "$@"; PROD_REGIONS="$2"; shift 2 ;;
-    --test-regions)
-      require_value "$@"; TEST_REGIONS="$2"; shift 2 ;;
+    --networking-targets)
+      require_value "$@"; NETWORKING_TARGETS="$2"; shift 2 ;;
+    --compute-targets)
+      require_value "$@"; COMPUTE_TARGETS="$2"; shift 2 ;;
+    --storage-db-targets)
+      require_value "$@"; STORAGE_DB_TARGETS="$2"; shift 2 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -82,7 +85,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-validate_targets() {
+validate_org_root_id() {
+  local id="$1"
+  [[ "$id" == "NONE" ]] && return 0
+  if [[ ! "$id" =~ ^r-[a-z0-9]{4,32}$ ]]; then
+    echo "Error: invalid org root ID '$id'; expected format r-XXXX (e.g., r-a1b2)." >&2
+    exit 2
+  fi
+}
+
+validate_ou_targets() {
   local label="$1" csv="$2" target
   [[ "$csv" == "NONE" ]] && return 0
   IFS=',' read -r -a targets <<< "$csv"
@@ -109,14 +121,12 @@ validate_regions() {
   done
 }
 
-validate_targets "Prod region-lock" "$PROD_REGION_TARGETS"
-validate_targets "Test region-lock" "$TEST_REGION_TARGETS"
-validate_targets "service-allowlist" "$SERVICE_ALLOWLIST_TARGETS"
-validate_targets "EC2 size" "$EC2_INSTANCE_SIZE_TARGETS"
-validate_targets "baseline-security" "$BASELINE_SECURITY_TARGETS"
-validate_targets "cost-control" "$COST_CONTROL_TARGETS"
-validate_regions "Prod" "$PROD_REGIONS"
-validate_regions "Test" "$TEST_REGIONS"
+validate_org_root_id "$ORG_ROOT_ID"
+validate_ou_targets "EC2 size" "$EC2_INSTANCE_SIZE_TARGETS"
+validate_ou_targets "networking" "$NETWORKING_TARGETS"
+validate_ou_targets "compute" "$COMPUTE_TARGETS"
+validate_ou_targets "storage-db" "$STORAGE_DB_TARGETS"
+validate_regions "allowed" "$ALLOWED_REGIONS"
 
 read -r CALLER_ACCOUNT CALLER_ARN CALLER_USER_ID < <(
   aws sts get-caller-identity --query '[Account,Arn,UserId]' --output text
@@ -143,17 +153,17 @@ fi
 echo "Verified Organizations management account: $MANAGEMENT_ACCOUNT"
 
 printf '\nAttachment plan (NONE means detached):\n'
-printf '  Prod region lock:  %s (regions: %s)\n' "$PROD_REGION_TARGETS" "$PROD_REGIONS"
-printf '  Test region lock:  %s (regions: %s)\n' "$TEST_REGION_TARGETS" "$TEST_REGIONS"
-printf '  Service allowlist: %s\n' "$SERVICE_ALLOWLIST_TARGETS"
-printf '  EC2 size control:  %s\n' "$EC2_INSTANCE_SIZE_TARGETS"
-printf '  Baseline security: %s\n' "$BASELINE_SECURITY_TARGETS"
-printf '  Cost control:      %s\n' "$COST_CONTROL_TARGETS"
+printf '\n  Org-root baseline stack (%s):\n' "$ORG_BASELINE_STACK"
+printf '    Org root target:   %s (regions: %s)\n' "$ORG_ROOT_ID" "$ALLOWED_REGIONS"
+printf '\n  OU policies stack (%s):\n' "$OU_POLICIES_STACK"
+printf '    EC2 size control:        %s\n' "$EC2_INSTANCE_SIZE_TARGETS"
+printf '    Networking cost guard:   %s\n' "$NETWORKING_TARGETS"
+printf '    Compute cost guard:      %s\n' "$COMPUTE_TARGETS"
+printf '    Storage/DB cost guard:   %s\n' "$STORAGE_DB_TARGETS"
 
 HAS_ATTACHMENTS=false
-for targets in \
-  "$PROD_REGION_TARGETS" "$TEST_REGION_TARGETS" "$SERVICE_ALLOWLIST_TARGETS" \
-  "$EC2_INSTANCE_SIZE_TARGETS" "$BASELINE_SECURITY_TARGETS" "$COST_CONTROL_TARGETS"; do
+for targets in "$ORG_ROOT_ID" "$EC2_INSTANCE_SIZE_TARGETS" \
+  "$NETWORKING_TARGETS" "$COMPUTE_TARGETS" "$STORAGE_DB_TARGETS"; do
   if [[ "$targets" != "NONE" ]]; then
     HAS_ATTACHMENTS=true
     break
@@ -177,26 +187,45 @@ else
   echo "Detached deployment: no SCP will be attached."
 fi
 
-echo "Deploying stack '$STACK_NAME' in '$REGION'..."
+echo ""
+echo "Deploying org-root baseline stack '$ORG_BASELINE_STACK' in '$REGION'..."
 aws cloudformation deploy \
-  --stack-name "$STACK_NAME" \
-  --template-file "$TEMPLATE" \
+  --stack-name "$ORG_BASELINE_STACK" \
+  --template-file "$ORG_BASELINE_TEMPLATE" \
   --region "$REGION" \
   --no-fail-on-empty-changeset \
   --parameter-overrides \
     "PolicyNamePrefix=$POLICY_NAME_PREFIX" \
-    "ProdAllowedRegions=$PROD_REGIONS" \
-    "TestAllowedRegions=$TEST_REGIONS" \
-    "ProdRegionLockTargetIds=$PROD_REGION_TARGETS" \
-    "TestRegionLockTargetIds=$TEST_REGION_TARGETS" \
-    "ServiceAllowlistTargetIds=$SERVICE_ALLOWLIST_TARGETS" \
-    "Ec2InstanceSizeTargetIds=$EC2_INSTANCE_SIZE_TARGETS" \
-    "BaselineSecurityTargetIds=$BASELINE_SECURITY_TARGETS" \
-    "CostControlTargetIds=$COST_CONTROL_TARGETS"
+    "AllowedRegions=$ALLOWED_REGIONS" \
+    "OrgRootTargetId=$ORG_ROOT_ID"
 
-echo "Deployment complete. Policy IDs:"
+echo "Org-root baseline stack deployed. Policy IDs:"
 aws cloudformation describe-stacks \
-  --stack-name "$STACK_NAME" \
+  --stack-name "$ORG_BASELINE_STACK" \
   --region "$REGION" \
   --query 'Stacks[0].Outputs[].{Policy:OutputKey,Id:OutputValue}' \
   --output table
+
+echo ""
+echo "Deploying OU policies stack '$OU_POLICIES_STACK' in '$REGION'..."
+aws cloudformation deploy \
+  --stack-name "$OU_POLICIES_STACK" \
+  --template-file "$OU_POLICIES_TEMPLATE" \
+  --region "$REGION" \
+  --no-fail-on-empty-changeset \
+  --parameter-overrides \
+    "PolicyNamePrefix=$POLICY_NAME_PREFIX" \
+    "Ec2InstanceSizeTargetIds=$EC2_INSTANCE_SIZE_TARGETS" \
+    "NetworkingCostGuardTargetIds=$NETWORKING_TARGETS" \
+    "ComputeCostGuardTargetIds=$COMPUTE_TARGETS" \
+    "StorageDbCostGuardTargetIds=$STORAGE_DB_TARGETS"
+
+echo "OU policies stack deployed. Policy IDs:"
+aws cloudformation describe-stacks \
+  --stack-name "$OU_POLICIES_STACK" \
+  --region "$REGION" \
+  --query 'Stacks[0].Outputs[].{Policy:OutputKey,Id:OutputValue}' \
+  --output table
+
+echo ""
+echo "Both stacks deployed successfully."

@@ -1,0 +1,355 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Organization-root SCP guardrails: baseline security, region lock, service
+  allowlist, and cost commitments. Policies apply universally to all member
+  accounts when attached to the organization root. Deploy from the management
+  account.
+
+Parameters:
+  PolicyNamePrefix:
+    Type: String
+    Default: home-guardrail
+    AllowedPattern: "^[A-Za-z0-9_-]{1,40}$"
+    Description: Generic policy-name prefix.
+
+  AllowedRegions:
+    Type: CommaDelimitedList
+    Default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
+    Description: Regions allowed by the region-lock policy.
+
+  OrgRootTargetId:
+    Type: String
+    Default: NONE
+    AllowedPattern: "^(NONE|r-[a-z0-9]{4,32})$"
+    Description: Organization root ID (r-XXXX) or NONE to leave all policies detached.
+
+Conditions:
+  AttachToRoot: !Not [!Equals [!Ref OrgRootTargetId, NONE]]
+
+Resources:
+  BaselineSecurityPolicy:
+    Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${PolicyNamePrefix}-baseline-security
+      Type: SERVICE_CONTROL_POLICY
+      Description: IMDSv2, EBS encryption, no IAM users/keys, no leave-org, protect quarantine role and S3 public access block.
+      TargetIds: !If
+        - AttachToRoot
+        - - !Ref OrgRootTargetId
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RequireImdsv2OnLaunch
+            Effect: Deny
+            Action: ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringNotEquals:
+                ec2:MetadataHttpTokens: required
+          - Sid: DenyExplicitImdsv1OnExisting
+            Effect: Deny
+            Action: ec2:ModifyInstanceMetadataOptions
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringEquals:
+                ec2:MetadataHttpTokens: optional
+          - Sid: DenyLeaveOrganization
+            Effect: Deny
+            Action: organizations:LeaveOrganization
+            Resource: "*"
+          - Sid: DenyDisableEbsEncryptionByDefault
+            Effect: Deny
+            Action: ec2:DisableEbsEncryptionByDefault
+            Resource: "*"
+          - Sid: RequireEncryptedEbsVolumes
+            Effect: Deny
+            Action:
+              - ec2:CreateVolume
+              - ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:volume/*
+            Condition:
+              Bool:
+                ec2:Encrypted: "false"
+          - Sid: ProtectS3AccountPublicAccessBlock
+            Effect: Deny
+            Action:
+              - s3:PutAccountPublicAccessBlock
+              - s3:DeleteAccountPublicAccessBlock
+            Resource: "*"
+          - Sid: DenyIamUsersAndAccessKeys
+            Effect: Deny
+            Action:
+              - iam:CreateUser
+              - iam:CreateAccessKey
+              - iam:CreateLoginProfile
+            Resource: "*"
+          - Sid: ProtectQuarantineRemediationRole
+            Effect: Deny
+            Action:
+              - iam:DeleteRole
+              - iam:DeleteRolePolicy
+              - iam:PutRolePolicy
+              - iam:UpdateAssumeRolePolicy
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+            Resource: arn:aws:iam::*:role/home-cost-quarantine-remediation
+            Condition:
+              ArnNotLike:
+                aws:PrincipalArn: arn:aws:iam::*:role/stacksets-exec-*
+
+  RegionLockPolicy:
+    Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${PolicyNamePrefix}-region-lock
+      Type: SERVICE_CONTROL_POLICY
+      Description: Deny all regional actions outside the allowed-region list; exempt global services.
+      TargetIds: !If
+        - AttachToRoot
+        - - !Ref OrgRootTargetId
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyOutsideAllowedRegions
+            Effect: Deny
+            NotAction:
+              - account:*
+              - artifact:*
+              - aws-external-anthropic:*
+              - aws-portal:*
+              - billing:*
+              - budgets:*
+              - ce:*
+              - consolidatedbilling:*
+              - cur:*
+              - freetier:*
+              - invoicing:*
+              - payments:*
+              - tax:*
+              - bcm-data-exports:*
+              - cost-optimization-hub:*
+              - purchase-orders:*
+              - cloudfront:*
+              - cloudfront-keyvaluestore:*
+              - health:*
+              - iam:*
+              - organizations:*
+              - route53:*
+              - route53domains:*
+              - sts:*
+              - support:*
+              - supportplans:*
+              - trustedadvisor:*
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:RequestedRegion: !Ref AllowedRegions
+
+  ServiceAllowlistPolicy:
+    Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${PolicyNamePrefix}-service-allowlist
+      Type: SERVICE_CONTROL_POLICY
+      Description: Deny service actions outside the home-workload allowlist.
+      TargetIds: !If
+        - AttachToRoot
+        - - !Ref OrgRootTargetId
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyServicesNotInAllowlist
+            Effect: Deny
+            NotAction:
+              - bedrock:*
+              - bedrock-agentcore:*
+              - bedrock-mantle:*
+              - aws-external-anthropic:*
+              - aws-marketplace:Subscribe
+              - aws-marketplace:ViewSubscriptions
+              - events:*
+              - scheduler:*
+              - schemas:*
+              - pipes:*
+              - transcribe:*
+              - translate:*
+              - apigateway:*
+              - execute-api:*
+              - athena:*
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:GetTable
+              - glue:GetTables
+              - glue:GetPartition
+              - glue:GetPartitions
+              - glue:BatchGetPartition
+              - glue:CreateDatabase
+              - glue:CreateTable
+              - glue:UpdateTable
+              - glue:DeleteTable
+              - glue:CreatePartition
+              - glue:BatchCreatePartition
+              - glue:UpdatePartition
+              - glue:DeletePartition
+              - glue:BatchDeletePartition
+              - apprunner:*
+              - artifact:*
+              - health:*
+              - organizations:*
+              - aws-portal:*
+              - billing:*
+              - account:*
+              - ce:*
+              - cur:*
+              - budgets:*
+              - consolidatedbilling:*
+              - freetier:*
+              - invoicing:*
+              - payments:*
+              - tax:*
+              - bcm-data-exports:*
+              - cost-optimization-hub:*
+              - purchase-orders:*
+              - acm:*
+              - cloudformation:*
+              - cloudfront:*
+              - cloudfront-keyvaluestore:*
+              - cloudshell:*
+              - cloudtrail:*
+              - cloudwatch:*
+              - logs:*
+              - codeartifact:*
+              - codebuild:*
+              - codecommit:*
+              - codedeploy:*
+              - codepipeline:*
+              - cognito-idp:*
+              - cognito-identity:*
+              - cognito-sync:*
+              - dynamodb:*
+              - ec2:*
+              - ec2messages:*
+              - imagebuilder:*
+              - elasticfilesystem:*
+              - autoscaling:*
+              - application-autoscaling:*
+              - ecr:*
+              - ecr-public:*
+              - ecs:*
+              - guardduty:*
+              - iam:*
+              - sso:*
+              - sso-directory:*
+              - identitystore:*
+              - sso-oauth:*
+              - kms:*
+              - lambda:*
+              - mediaconvert:*
+              - ram:*
+              - route53:*
+              - route53domains:*
+              - route53resolver:*
+              - s3:*
+              - s3-object-lambda:*
+              - servicequotas:*
+              - sns:*
+              - sqs:*
+              - states:*
+              - ssm:*
+              - ssmmessages:*
+              - trustedadvisor:*
+              - support:*
+              - supportplans:*
+              - sts:*
+              - tag:*
+            Resource: "*"
+          - Sid: DenyMarketplaceSubscribeOutsideBedrockMantle
+            Effect: Deny
+            Action: aws-marketplace:Subscribe
+            Resource: "*"
+            Condition:
+              StringNotEqualsIfExists:
+                aws:CalledViaLast: bedrock-mantle.amazonaws.com
+
+  CostCommitmentsPolicy:
+    Type: AWS::Organizations::Policy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${PolicyNamePrefix}-cost-commitments
+      Type: SERVICE_CONTROL_POLICY
+      Description: Block EC2 capacity commitments and Dedicated tenancy.
+      TargetIds: !If
+        - AttachToRoot
+        - - !Ref OrgRootTargetId
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: project
+          Value: cloud-mgmt
+        - Key: component
+          Value: scp-guardrails
+        - Key: managed-by
+          Value: cloudformation
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyEc2CapacityCommitments
+            Effect: Deny
+            Action:
+              - ec2:PurchaseReservedInstancesOffering
+              - ec2:ModifyReservedInstances
+              - ec2:PurchaseCapacityBlock
+              - ec2:PurchaseHostReservation
+              - ec2:CreateCapacityReservation
+              - ec2:PurchaseScheduledInstances
+              - ec2:AllocateHosts
+            Resource: "*"
+          - Sid: DenyDedicatedTenancy
+            Effect: Deny
+            Action: ec2:RunInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringNotEquals:
+                ec2:Tenancy: default
+
+Outputs:
+  BaselineSecurityPolicyId:
+    Description: Policy ID of the baseline-security SCP.
+    Value: !Ref BaselineSecurityPolicy
+  RegionLockPolicyId:
+    Description: Policy ID of the region-lock SCP.
+    Value: !Ref RegionLockPolicy
+  ServiceAllowlistPolicyId:
+    Description: Policy ID of the service-allowlist SCP.
+    Value: !Ref ServiceAllowlistPolicy
+  CostCommitmentsPolicyId:
+    Description: Policy ID of the cost-commitments SCP.
+    Value: !Ref CostCommitmentsPolicy

@@ -10,6 +10,36 @@ The design separates the human identity used for management-plane work from the
 identity used for workloads. It combines subtractive SCP guardrails, account
 baselines, budget alerts, and an optional spend quarantine.
 
+## Design philosophy: guardrails for the agentic age
+
+This is not a traditional landing zone. It is purpose-built for a home AWS setup
+where AI coding assistants routinely create and modify infrastructure. The core
+assumption: **prevention is cheaper than remediation**.
+
+AI agents make assumptions that fit enterprise purposes but not home budgets. A
+coding assistant asked to "make this production-ready" will add a NAT Gateway, an
+Application Load Balancer, and an RDS instance — all reasonable in a business
+context, all costing $50–200/month idle in a personal one. One missing prompt,
+one trusting "yes", and it's deployed. Budget alarms fire hours later.
+
+The layered defense model:
+
+1. **SCPs (hardest boundary):** Organization-level service and resource denials
+   that no IAM policy, no agent, and no human in a workload account can override.
+   If a resource type costs meaningful money just *existing* and isn't needed,
+   its creation is denied at the organization level.
+2. **Budget actions (automatic containment):** When spend thresholds are breached,
+   an SCP immediately blocks further resource creation and a state machine stops
+   what's already running.
+3. **Remediation (damage control):** Multi-region Step Functions that scale ECS
+   services to zero, ASG groups to zero, and stop standalone EC2 instances.
+4. **Identity separation:** Management and workload use different users, different
+   sessions, different permission boundaries.
+
+This order is deliberate: prevention → containment → remediation → isolation.
+Each layer catches what the previous one missed. The goal is to prefer brief
+downtime over runaway bills — this is a home setup paid from a personal account.
+
 ## Target organization and identities
 
 The account and OU names are examples; discover and reconcile the real IDs and
@@ -54,7 +84,7 @@ member-account policy mistakes.
 |---|---|---|---|
 | [`idc-permission-sets`](./idc-permission-sets) | Separate management/workload users with management roles, billing visibility, and workload administration | Console-only temporary bootstrap, then CloudFormation (`AWS::SSO::*`) through SSO | Management account, Identity Center home Region |
 | [`account-baseline`](./account-baseline) | Enable S3 account Block Public Access, EBS default encryption, IMDSv2 defaults, and optional GuardDuty | CLI + CloudFormation | Each account |
-| [`scp-guardrails`](./scp-guardrails) | Region, service, instance-size, baseline-security, and cost guardrails | CloudFormation (`AWS::Organizations::Policy`) | Management account |
+| [`scp-guardrails`](./scp-guardrails) | Layered SCPs: org-root baseline (security, regions, service allowlist, cost commitments) + OU-level cost guards (networking, compute, storage/DB, instance size) | CloudFormation (`AWS::Organizations::Policy`) | Management account |
 | [`budget-alarms`](./budget-alarms) | One managed $20 organization-wide Safety Net | CloudFormation (`AWS::Budgets::Budget`) | Management account |
 | [`cost-quarantine`](./cost-quarantine) | Automatic SCP containment at Test forecasted $50 and Prod actual $50; optional multi-region resource remediation (zero Lambda) | Native Budgets actions + Organizations SCP + StackSets + Step Functions | Management account + workload accounts |
 | [`scheduled-switch`](./scheduled-switch) | Turn selected expensive resources off while idle | SAM / Lambda | Workload accounts |
