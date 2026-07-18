@@ -142,31 +142,36 @@ the recovery boundary if a member-account policy is wrong.
 
 ```mermaid
 flowchart TD
-    Root([Organization root])
-    Prod([Prod OU])
-    Test([Test OU])
+    Root[Organization root]
+    Prod[Prod OU]
+    Test[Test OU]
 
-    Root --> Universal
+    Root --> Universal[Universal home-account guardrails]
+    Universal --> U1[Security baseline]
+    Universal --> U2[Coarse five-region ceiling]
+    Universal --> U3[Service allowlist]
+    Universal --> U4[No capacity commitments]
+
     Root --> Prod
     Root --> Test
-    Prod --> Opinionated
+    Prod --> Opinionated[Opinionated cost guard]
     Test --> Opinionated
 
-    Universal["<b>Universal guardrails</b><br/>Security baseline<br/>Coarse five-region ceiling<br/>Service allowlist<br/>No capacity commitments"]
-    Opinionated["<b>Opinionated cost guard</b><br/>Small EC2 only<br/>No costly networking<br/>No managed databases / clusters<br/>No recurring 'best-practice' extras"]
+    Opinionated --> O1[Small EC2 only]
+    Opinionated --> O2[No costly networking]
+    Opinionated --> O3[No managed databases / clusters]
+    Opinionated --> O4[No recurring “best-practice” extras]
 
     classDef structure fill:#e8eef7,stroke:#3b5b92,color:#1a2b45;
-    classDef universal fill:#e5f3e8,stroke:#2f7d43,color:#12331d;
-    classDef opinionated fill:#fdf0e3,stroke:#b3701f,color:#4a2e08;
+    classDef policy fill:#e5f3e8,stroke:#2f7d43,color:#12331d;
+    classDef universalItem fill:#f2f9f4,stroke:#5a9e6f,color:#12331d;
+    classDef opinionatedItem fill:#fdf0e3,stroke:#b3701f,color:#4a2e08;
 
     class Root,Prod,Test structure;
-    class Universal universal;
-    class Opinionated opinionated;
+    class Universal,Opinionated policy;
+    class U1,U2,U3,U4 universalItem;
+    class O1,O2,O3,O4 opinionatedItem;
 ```
-
-Legend: rounded blue nodes are Organizations structure; the green node is the
-org-root policy set applied everywhere; the amber node is the opinionated
-OU-level policy applied to both workload OUs.
 
 **Org root — organization-wide outer boundaries.** These define encryption and
 credential invariants, a coarse region ceiling, the set of services that may
