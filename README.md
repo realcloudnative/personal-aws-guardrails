@@ -1,106 +1,258 @@
-# cloud-mgmt — a lightweight home AWS landing-zone starter
+# cloud-mgmt
 
-A small, cost-conscious collection of examples for bringing basic structure to
-an **existing** personal AWS Organization without Control Tower or AWS Config.
-These files are a starting point for review and adaptation—not production-ready
-or enterprise controls, a compliance framework, or a substitute for threat
-modeling and testing in your own organization.
+**Guardrails for personal AWS accounts in the age of AI coding assistants.**
 
-The design separates the human identity used for management-plane work from the
-identity used for workloads. It combines subtractive SCP guardrails, account
-baselines, budget alerts, and an optional spend quarantine.
+Your AI assistant just offered to "make this production-ready." It added a NAT
+Gateway ($32/month), an Application Load Balancer ($16/month), and an RDS
+instance ($15/month). You said "yes" because it sounded reasonable. Budget
+alerts fire 8 hours later. You're $63/month heavier — on a hobby project.
 
-## Design philosophy: guardrails for the agentic age
+This repository prevents that. Not with monitoring. Not with alerts. With
+**hard denials at the AWS Organization level** that no IAM policy, no human, and
+no AI agent can override.
 
-This is not a traditional landing zone. It is purpose-built for a home AWS setup
-where AI coding assistants routinely create and modify infrastructure. The core
-assumption: **prevention is cheaper than remediation**.
-
-AI agents make assumptions that fit enterprise purposes but not home budgets. A
-coding assistant asked to "make this production-ready" will add a NAT Gateway, an
-Application Load Balancer, and an RDS instance — all reasonable in a business
-context, all costing $50–200/month idle in a personal one. One missing prompt,
-one trusting "yes", and it's deployed. Budget alarms fire hours later.
-
-The damage is not always dramatic. Agents also create KMS customer-managed keys
-($1/month each, forever), allocate Elastic IPs ($3.60/month since February 2024),
-provision CloudWatch dashboards ($3/month), and enable "best-practice" features
-that have recurring charges. Individually negligible in an enterprise; in a home
-setup targeting a $20/month total, five unnecessary resources can double the bill.
-Prevention at the organization level is the only defense that works against both
-catastrophic mistakes and death by a thousand cuts.
-
-### Tenets
-
-1. **Prefer downtime over runaway bills.** This is a personal account, not a
-   business. Brief unavailability costs nothing; forgotten infrastructure costs
-   real money every hour.
-2. **Deny by default, allow by exception.** Services that are not explicitly
-   needed do not exist. Resources that cost money just existing cannot be created.
-3. **Two layers of SCPs.** Coarse-grained guards at the organization root are
-   universally sensible — no reasonable home setup needs NAT Gateways or EKS.
-   Fine-grained guards at the OU level are opinionated — someone forking this
-   repository might disagree and customize them.
-4. **No long-lived credentials, anywhere.** IAM users, access keys, SSH keys,
-   service-specific credentials, and IAM Roles Anywhere are all hard-denied.
-   The only authentication paths are SSO temporary sessions and service roles.
-5. **Defense in depth.** Removing a service from the allowlist is the primary
-   deny. Explicit action denies in the OU-level policy are the secondary deny.
-   Budget actions and quarantine remediation are the final safety nets.
-
-### Layered defense model
-
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│ Layer 1: SCPs (hardest boundary, org root + OU)                 │
-│   Cannot be overridden by any IAM policy, agent, or human.      │
-├─────────────────────────────────────────────────────────────────┤
-│ Layer 2: Budget actions (automatic containment)                  │
-│   SCP blocks new resource creation when thresholds breach.       │
-├─────────────────────────────────────────────────────────────────┤
-│ Layer 3: Remediation (damage control)                            │
-│   Step Functions scale ECS→0, ASG→0, stop EC2 instances.         │
-├─────────────────────────────────────────────────────────────────┤
-│ Layer 4: Identity separation                                     │
-│   Management and workload use different users and sessions.      │
-└─────────────────────────────────────────────────────────────────┘
+```
+$ aws ec2 create-nat-gateway --subnet-id subnet-abc123
+An error occurred (UnauthorizedOperation): explicit deny in a service control policy
 ```
 
-### SCP architecture: two functional layers
+## This is for you if
 
-The [`scp-guardrails`](./scp-guardrails) component splits policy into two
-stacks with a clear philosophical boundary:
+- You run a personal AWS account and pay from your own pocket
+- You use AI coding assistants (Copilot, Claude, Cursor, Q, etc.) for infrastructure
+- You've been surprised by an AWS bill at least once
+- You want to experiment freely inside safe boundaries
+- You'd rather have brief downtime than a runaway bill
 
-**Org root (universally sensible):** Security invariants, region boundaries, the
-service allowlist, and capacity-commitment denies. These apply to every member
-account. If you fork this repository for your own home setup, you'd keep these
-unchanged. They prevent universally wasteful or dangerous actions: unencrypted
-volumes, services you don't use, regions you don't operate in, reserved-instance
-purchases, and all forms of long-lived credentials.
+## This is NOT
 
-**OU level (opinionated for this setup):** One policy containing all the "I don't
-want this exposure, but someone else might disagree" boundaries. Instance sizes,
-NAT Gateways, EIPs, CMK creation, load balancers, provisioned throughput, managed
-databases, and more. These are choices — a different home setup might allow RDS or
-larger instances. Detach or customize this policy to match your needs.
+- A production enterprise landing zone
+- A replacement for AWS Control Tower
+- A compliance framework
+- Universal — it's opinionated, and it says so
 
-See [`scp-guardrails/README.md`](./scp-guardrails/README.md) for the full
-service-by-service rationale and bypass documentation.
+## The problem: unintended AI actions
 
-## Target organization and identities
+AI coding assistants optimize for "working correctly" not "affordable for a
+personal account." They treat your infrastructure like enterprise infrastructure
+because that's what their training data looks like.
+
+Three failure modes this repository addresses:
+
+```mermaid
+graph LR
+    A[AI Agent] -->|"make it production-ready"| B[NAT Gateway<br/>$32/mo]
+    A -->|"add monitoring"| C[CloudWatch Dashboard<br/>$3/mo]
+    A -->|"use encryption best practices"| D[KMS CMK<br/>$1/mo forever]
+    A -->|"add a database"| E[RDS t3.micro<br/>$15/mo]
+    
+    B --> F[💸 $63/mo from<br/>one conversation]
+    C --> F
+    D --> F
+    E --> F
+```
+
+| Failure mode | Example | How we prevent it |
+|---|---|---|
+| **Catastrophic** | Agent creates EKS cluster ($72/mo control plane) | Service not in allowlist → hard deny |
+| **Accumulative** | Agent creates 5 CMKs "for best practice" ($5/mo forever) | `kms:CreateKey` denied at OU level |
+| **Unnoticed** | Agent allocates EIP "just in case" ($3.60/mo) | `ec2:AllocateAddress` denied |
+
+## How it works
+
+```mermaid
+graph TD
+    subgraph "Layer 1: Prevention (SCPs)"
+        O[Org Root] -->|universally sensible| A1[Service Allowlist]
+        O --> A2[Region Lock]
+        O --> A3[Security Baseline]
+        O --> A4[No Capacity Commitments]
+        OU[Each OU] -->|opinionated| B1[Opinionated Cost Guard]
+    end
+    
+    subgraph "Layer 2: Containment (Budgets)"
+        C1[Budget threshold breached] --> C2[SCP auto-attached:<br/>blocks new resources]
+    end
+    
+    subgraph "Layer 3: Remediation (Step Functions)"
+        D1[EventBridge trigger] --> D2[ECS → 0]
+        D1 --> D3[ASG → 0]
+        D1 --> D4[EC2 stopped]
+    end
+    
+    A1 -.->|"blocks 95% of<br/>expensive mistakes"| X[Never created]
+    B1 -.->|"blocks the rest"| X
+    C2 -.->|"stops the bleeding"| Y[Can't create more]
+    D2 -.->|"kills what's running"| Z[Costs stop]
+```
+
+**Layer 1** catches it before it exists. **Layer 2** stops the bleeding when
+something slips through. **Layer 3** kills what's already running. Most threats
+never reach Layer 2.
+
+## What it blocks (with dollar amounts)
+
+| Resource | Monthly cost | Status |
+|---|---|---|
+| NAT Gateway | $32+ | ❌ Hard deny |
+| ALB/NLB | $16+ | ❌ Hard deny |
+| RDS (any) | $15+ | ❌ Hard deny |
+| EKS control plane | $72 | ❌ Hard deny |
+| ElastiCache | $13+ | ❌ Hard deny |
+| KMS customer keys | $1 each, forever | ❌ Hard deny |
+| Elastic IPs | $3.60 each (since Feb 2024) | ❌ Hard deny |
+| CloudWatch dashboards | $3 each | ❌ Deny unless tagged `CreatedBy: manual` |
+| Provisioned IOPS (io1/io2) | 10× gp3 cost | ❌ Hard deny |
+| EC2 > t3.small | $50–500+ | ❌ Hard deny |
+| Reserved instances | $hundreds committed | ❌ Hard deny |
+| 40+ other services | varies | ❌ Not in allowlist |
+
+## What it allows (deliberately)
+
+| Resource | Cost model | Why kept |
+|---|---|---|
+| EC2 (nano/micro/small) | Pay for uptime | Core compute, size-limited |
+| Lambda | Pay per invocation | Serverless foundation |
+| API Gateway | Pay per request | HTTP endpoints |
+| S3 + S3 Files | Pay per GB + request | Storage foundation |
+| DynamoDB (on-demand) | Pay per request | Serverless database |
+| CloudFront | Pay per request | CDN, replaces ALB for HTTPS |
+| ECS/Fargate | Pay per vCPU-second | Container workloads |
+| Bedrock (on-demand) | Pay per token | AI/LLM (provisioned throughput denied) |
+| Step Functions | Pay per transition | Orchestration |
+| VPC + subnets + IGW | Free | Networking foundation |
+
+The full service-by-service rationale is in [`scp-guardrails/README.md`](./scp-guardrails/README.md).
+
+## Tenets
+
+1. **Prefer downtime over runaway bills.** Brief unavailability costs nothing.
+   Forgotten infrastructure costs real money every hour.
+2. **Deny by default, allow by exception.** If you don't explicitly need a
+   service, it doesn't exist in your account.
+3. **Two layers of guardrails.** Org-root policies are universally sensible —
+   keep them if you fork. OU-level policies are opinionated — customize them.
+4. **No long-lived credentials, anywhere.** IAM users, access keys, SSH keys,
+   and service-specific credentials are hard-denied. Only SSO temporary sessions
+   and service roles exist.
+5. **Prevention beats detection.** An SCP deny fires in milliseconds. A budget
+   alert fires in hours. Choose the former when possible.
+
+## Quick start
+
+```bash
+# Clone
+git clone <this-repo> && cd cloud-mgmt
+
+# Validate offline (no AWS credentials needed)
+cd scp-guardrails && cfn-lint cloudformation/*.yaml && bash -n deploy.sh
+
+# Deploy all policies DETACHED (safe — changes nothing until you attach)
+aws sso login --profile home-mgmt-landing
+./deploy.sh
+
+# Review policies in AWS Console, then attach
+./deploy.sh --org-root-id r-XXXX --opinionated-targets ou-XXXX-XXXXXXXX
+```
+
+Attaching requires typing `ATTACH` at the prompt. There is no one-shot installer.
+Each step is separate, reversible, and verifiable.
+
+## Architecture
+
+```text
+Organization root
+├── management account       ← billing, SCPs, quarantine orchestration
+├── Prod OU
+│   └── production account   ← stable workloads, strict budgets
+└── Test OU
+    └── test account         ← experiments, higher risk tolerance
+```
+
+| Component | Purpose | Details |
+|---|---|---|
+| [`scp-guardrails`](./scp-guardrails) | Layered SCPs: org-root baseline + OU-level opinionated cost guard | [full docs](./scp-guardrails/README.md) |
+| [`cost-quarantine`](./cost-quarantine) | Auto-remediation: stop EC2, scale ECS→0, scale ASG→0 when budgets breach | [full docs](./cost-quarantine/README.md) |
+| [`idc-permission-sets`](./idc-permission-sets) | Identity separation: management vs workload users | [full docs](./idc-permission-sets/README.md) |
+| [`account-baseline`](./account-baseline) | S3 Block Public Access, EBS encryption, IMDSv2 defaults | [full docs](./account-baseline/README.md) |
+| [`budget-alarms`](./budget-alarms) | $20 organization-wide safety net | [full docs](./budget-alarms/README.md) |
+| [`scheduled-switch`](./scheduled-switch) | Turn expensive resources off when idle | [full docs](./scheduled-switch/README.md) |
+
+## SCP architecture: two functional layers
+
+**Org root (universally sensible)** — four policies that apply to every member
+account. If you fork this repository, keep these unchanged:
+
+- **Baseline security**: IMDSv2, EBS encryption, no long-lived credentials
+- **Region lock**: 5 allowed regions
+- **Service allowlist**: only permitted services exist (the most powerful policy)
+- **Cost commitments**: no reserved instances or dedicated tenancy
+
+**OU level (opinionated for this setup)** — one policy with all the "I don't
+want this, but you might" choices:
+
+- Instance sizes ≤ small
+- No NAT Gateways, EIPs, ALBs, Transit Gateways, VPNs
+- No CMKs (AWS-managed encryption keys are free and sufficient)
+- No EKS, EMR, MSK, OpenSearch, managed databases
+- No provisioned throughput (Bedrock, Lambda, IOPS)
+- No CloudWatch dashboards (unless you tag them intentionally)
+
+**Detach or customize** the OU-level policy to match your own priorities.
+
+## The "agentic age" angle
+
+Traditional landing zones protect against credential theft and human error.
+This one adds a third vector: **well-intentioned AI agents making expensive
+decisions on your behalf.**
+
+An AI agent doesn't steal your credentials. It uses them *exactly as authorized*
+to create resources you never explicitly asked for — because its training says
+that's the right thing to do. It's not malicious. It's not even wrong in an
+enterprise context. It's just expensive when you're paying personally.
+
+SCPs are the only mechanism that constrains this:
+- IAM policies? The agent has admin. It can change them.
+- Budget alerts? Fire hours later. The resource already exists.
+- Approval workflows? You *approved* the PR. You just didn't notice line 47.
+- Cost monitoring? Shows you the damage. Doesn't prevent it.
+
+An SCP deny fires **before the API call completes**. The resource never exists.
+The agent gets an error, adapts, and finds a cheaper path — or asks you what to
+do. That's the right outcome.
+
+## Customize for your setup
+
+| Want to change | What to modify |
+|---|---|
+| Allow larger EC2 instances | Edit the instance size check in `scp-ou-policies.yaml` |
+| Add a new AWS service | Add its namespace to the allowlist in `scp-org-baseline.yaml` |
+| Allow RDS for a specific use case | Remove `rds:Create*` from the OU deny statements |
+| Use different regions | Change `AllowedRegions` parameter |
+| Don't want AI guardrails, just security | Keep org-root policies, detach the OU policy |
+
+Every deny has a documented rationale. Every choice is a single line to change.
+
+## Prerequisites
+
+1. An existing AWS Organization with SCP policy type enabled
+2. IAM Identity Center with distinct management and workload users
+3. AWS CLI v2 + `cfn-lint`
+4. Named SSO profiles (no access keys anywhere in the workflow)
+5. The AWS-managed `FullAWSAccess` SCP attached (our policies subtract from it)
+
+## Operational guide
+
+See the detailed sections below for the full bootstrap and rollout procedure.
+
+---
+
+<details>
+<summary><strong>Target organization and identities</strong></summary>
 
 The account and OU names are examples; discover and reconcile the real IDs and
 names before deployment. The management account always remains directly under
 the organization root and cannot be moved into an OU.
-
-```text
-Organization root
-├── management account       # billing, Organizations, IAM Identity Center
-├── Prod OU
-│   └── production account   # small, stable workloads
-└── Test OU
-    └── test account         # experiments and higher spend risk
-```
 
 IAM Identity Center uses **two separate users** (or separately controlled
 principals), with no IDs or email addresses stored in this repository:
@@ -113,99 +265,17 @@ principals), with no IDs or email addresses stored in this repository:
 
 The management principal never receives a workload-account assignment. The
 workload principal's only management-account assignment is the intentionally
-narrow `BillingReadOnly`; its administrative role exists only in Test/Prod. Selecting a
-more powerful permission set on one Identity Center identity is **not step-up
-MFA**: Identity Center does not necessarily issue a fresh MFA challenge during
-a role switch. The meaningful boundary here is that management and workloads
-use separate users with separate authentication sessions. Protect both with
-strong MFA/passkeys; keep `IdentityCenterAdmin` sessions short.
+narrow `BillingReadOnly`; its administrative role exists only in Test/Prod.
 
 Suggested allowed Regions are `us-east-1`, `us-west-2`, `eu-central-1`,
 `eu-north-1`, and `ap-southeast-1`, plus required global services. SCPs do not
 apply to the management account, so management access is the recovery path for
 member-account policy mistakes.
 
-## Components
+</details>
 
-| Folder | Purpose | Mechanism | Deployment target |
-|---|---|---|---|
-| [`idc-permission-sets`](./idc-permission-sets) | Separate management/workload users with management roles, billing visibility, and workload administration | Console-only temporary bootstrap, then CloudFormation (`AWS::SSO::*`) through SSO | Management account, Identity Center home Region |
-| [`account-baseline`](./account-baseline) | Enable S3 account Block Public Access, EBS default encryption, IMDSv2 defaults, and optional GuardDuty | CLI + CloudFormation | Each account |
-| [`scp-guardrails`](./scp-guardrails) | Layered SCPs: org-root baseline (security, regions, service allowlist, cost commitments) + OU-level cost guards (networking, compute, storage/DB, instance size) | CloudFormation (`AWS::Organizations::Policy`) | Management account |
-| [`budget-alarms`](./budget-alarms) | One managed $20 organization-wide Safety Net | CloudFormation (`AWS::Budgets::Budget`) | Management account |
-| [`cost-quarantine`](./cost-quarantine) | Automatic SCP containment at Test forecasted $50 and Prod actual $50; optional multi-region resource remediation (zero Lambda) | Native Budgets actions + Organizations SCP + StackSets + Step Functions | Management account + workload accounts |
-| [`scheduled-switch`](./scheduled-switch) | Turn selected expensive resources off while idle | SAM / Lambda | Workload accounts |
-
-Review every component README and template before use. Account IDs, OU IDs,
-principal IDs, email addresses, and profile names are deployment inputs and must
-not be committed.
-
-## Choose your starting point
-
-This repository is designed for adoption, not only for a blank setup. Start at
-the first row that matches reality; do not recreate access or controls merely to
-make the environment resemble an example.
-
-| Current state | Start here | Do not do yet |
-|---|---|---|
-| IdC is enabled, but no management CLI role exists | Create the console-only temporary assignment below | Do not create IAM access keys |
-| `TemporaryBootstrapAdministrator` already works | Run the read-only inventory, then deploy permanent IdC access | Do not attach SCPs or remove bootstrap |
-| Permanent management SSO already works | Use `ManagementReadOnly` for inventory and reconcile existing assignments | Do not create a second temporary administrator |
-| Baselines, SCPs, budgets, or GuardDuty already exist | Use each component's adoption/replacement path | Do not overwrite, adopt, detach, disable, or delete by name alone |
-| These exact CloudFormation stacks already exist | Inspect stack status, parameters, outputs, drift, and live service state before updating | Do not assume source and deployed state still match |
-
-There is intentionally no one-shot installer. Identity, baseline mutation, SCP
-creation, SCP attachment, budget replacement, and quarantine are separate
-operations with separate rollback points.
-
-## Manual and assisted operation
-
-A human remains responsible for authentication and approval. A local automation
-assistant can reduce transcription errors and perform verification safely when
-given only:
-
-- an SSO profile name;
-- the exact allowed operation (for example, “read-only inventory” or “deploy the
-  detached SCP stack”); and
-- explicit approval immediately before security-sensitive mutations or deletion.
-
-Never send an assistant access keys, SSO tokens, browser cookies, cache files, or
-raw credentials. Prefer this operating loop for both manual and assisted use:
-
-1. **Identify** the account, Region, caller ARN, existing owner, and intended
-   resource name.
-2. **Inspect** current service state with read-only APIs.
-3. **Preview** what will be created, updated, attached, disabled, or deleted.
-4. **Mutate one boundary at a time.** Stack creation and policy attachment are
-   deliberately different steps.
-5. **Verify through the service API**, not only a successful shell exit or
-   CloudFormation status.
-6. **Stop on mismatch.** Preserve partial progress, fix the assumption or
-   parser issue, and rerun the idempotent wrapper instead of improvising.
-
-Keep a local ignored record of discovered identifiers and decisions. Public
-issues, commits, examples, and logs must use placeholders.
-
-## Safety prerequisites
-
-1. An existing AWS Organization with all features and SCP policy type enabled.
-   Keep the AWS-managed `FullAWSAccess` SCP attached; custom SCPs subtract from
-   it.
-2. IAM Identity Center enabled, with distinct management and workload users and
-   its home Region known.
-3. Root users protected with MFA. **Do not create root access keys.** Do not use
-   root for this deployment. Prefer centralized root access for member accounts
-   where available.
-4. One existing, tightly monitored, MFA-protected **console-only** IAM
-   break-glass user in the management account. It must have zero access keys and
-   is used only to create one temporary Identity Center assignment—not for CLI
-   or CloudFormation.
-5. AWS CLI v2 and local validation tools (`cfn-lint`; `shellcheck` recommended).
-6. Named AWS CLI SSO profiles. Every CLI mutation and every CloudFormation
-   deployment in this repository uses `aws sso login`; raw or long-lived IAM
-   credentials are never part of the workflow.
-
-## Getting started: bootstrap Identity Center first
+<details>
+<summary><strong>Getting started: bootstrap Identity Center</strong></summary>
 
 This is the only bootstrap path supported by this repository. It requires no IAM
 access key.
@@ -234,11 +304,6 @@ aws sso login --profile home-mgmt-bootstrap
 AWS_PROFILE=home-mgmt-bootstrap aws sts get-caller-identity
 ```
 
-In `aws configure sso`, name the SSO session `home-mgmt`, use the portal URL
-and IdC Region from the console, then select the management account and
-`TemporaryBootstrapAdministrator`. Verify the STS account is management and the
-ARN contains `AWSReservedSSO_TemporaryBootstrapAdministrator_`.
-
 After permanent access is deployed, keep one local SSO session per IdC user and
 one profile per account/role combination:
 
@@ -247,168 +312,90 @@ home-mgmt session:     home-mgmt-readonly, home-mgmt-landing, home-mgmt-identity
 home-workload session: home-billing-readonly, home-test-admin, home-prod-admin (when assigned)
 ```
 
-Profiles sharing a session also share one user login, but management and
-workload profiles must never share a session. The complete `~/.aws/config`
-example, browser-session precautions for selecting the correct user, and profile
-verification commands are in
-[`idc-permission-sets/README.md`](./idc-permission-sets/README.md#step-5--configure-local-sessions-and-permanent-profiles).
-
-The AWS CLI now obtains and refreshes short-lived role credentials from its SSO
-cache. To authorize a local automation agent, provide only the profile name and
-the operation it may perform—never paste credentials or cache contents.
-
 ### 3. Inventory, deploy permanent access, and retire bootstrap
 
-Use `home-mgmt-bootstrap` for the read-only inventory below before creating any
-stack. Then follow [`idc-permission-sets`](./idc-permission-sets):
+Follow [`idc-permission-sets`](./idc-permission-sets) to deploy permanent roles,
+then run `retire-bootstrap.sh` to remove the temporary assignment.
 
-1. Discover the IdC instance ARN, identity-store ID, and the two distinct user
-   IDs through the temporary SSO profile.
-2. Run `idc-permission-sets/deploy.sh` through that profile to create permanent
-   `ManagementReadOnly`, `LandingZoneAdmin`, `IdentityCenterAdmin`,
-   `BillingReadOnly`, and `WorkloadAdmin` assignments.
-3. Configure and verify every permanent SSO profile independently.
-4. Run `retire-bootstrap.sh`; it removes the temporary assignment only after
-   all expected permanent profiles and assignments pass verification.
-5. Confirm in IAM that the break-glass user still has zero access keys.
+</details>
 
-## Reconcile an existing organization first (read-only)
+<details>
+<summary><strong>Operational rollout and checkpoints</strong></summary>
 
-Do not assume the example shape matches reality. If permanent management SSO
-already exists, use `ManagementReadOnly`; during first bootstrap, use
-`home-mgmt-bootstrap`. Run this inventory **before any CloudFormation
-deployment**:
+Order matters. Treat each numbered item as a resumable phase.
 
-```bash
-export AWS_PROFILE=<management-read-only-profile>
-export AWS_REGION=<identity-center-home-region>
+1. **Establish temporary management SSO** when needed.
+2. **Inventory before creating.** Reconcile accounts, OUs, SCPs, stacks.
+3. **Deploy permanent identity access.**
+4. **Configure two local SSO sessions** (management + workload).
+5. **Apply baselines account by account.**
+6. **Create SCPs detached.** Verify in console.
+7. **Attach SCPs incrementally.** Start in Test.
+8. **Replace budgets without an alert gap.**
+9. **Choose GuardDuty scope deliberately.**
+10. **Deploy quarantine** with `ENABLE_REMEDIATION=false` first.
+11. **Optionally deploy scheduled switching.**
 
-aws sts get-caller-identity
-aws organizations describe-organization
-aws organizations list-accounts
-aws organizations list-roots
-aws organizations list-organizational-units-for-parent --parent-id <root-id>
-aws organizations list-policies --filter SERVICE_CONTROL_POLICY
-aws organizations list-policies-for-target \
-  --target-id <root-ou-or-account-id> --filter SERVICE_CONTROL_POLICY
-aws sso-admin list-instances --region "$AWS_REGION"
-aws cloudtrail describe-trails --include-shadow-trails --region <region>
-```
+Every CloudFormation deployment uses an SSO profile. The IAM break-glass
+principal is never used to run CloudFormation.
 
-Repeat relevant account/Region checks with each account's read-only or workload
-profile. Record the intended mapping of management, Test, and optional Prod IDs
-in a **local ignored audit output**, compare it with deployed stacks and policy
-attachments, and resolve drift or naming collisions before creating resources.
-Never commit account IDs, principal IDs, emails, CLI cache files, or inventory
-output.
+</details>
 
-## Operational rollout and checkpoints
+<details>
+<summary><strong>Manual and assisted operation</strong></summary>
 
-Order matters, particularly around Identity Center bootstrap and S3 Block Public
-Access. Treat each numbered item as a resumable phase; record its postconditions
-before moving on.
+A human remains responsible for authentication and approval. A local automation
+assistant can reduce transcription errors safely when given only:
 
-1. **Establish one temporary management SSO path when needed.** Create the
-   console-only assignment, configure `home-mgmt-bootstrap`, unset ambient IAM
-   credentials, and verify the management account and exact temporary role with
-   STS. If permanent management SSO already works, skip temporary creation.
-   **Stop** if the assignment exists with unexpected principals/accounts or the
-   caller does not match management.
-2. **Inventory before creating.** Reconcile accounts, OUs, IdC users and
-   assignments, SCP contents/targets, active stack names, budgets, GuardDuty
-   detectors, and CloudTrail trails. **Continue only when** intended IDs and
-   ownership are recorded locally and naming collisions are understood.
-3. **Deploy permanent identity access.** Run
-   `idc-permission-sets/deploy.sh` through temporary bootstrap on first creation
-   or `IdentityCenterAdmin` on updates. **Continue only when** the stack is
-   healthy and every permission set has the expected managed/inline policies
-   and direct assignment.
-4. **Configure two local SSO sessions, not one wizard per profile.** Reuse
-   `home-mgmt` for all management profiles and `home-workload` for Billing/Test/
-   Prod profiles. Authenticate once per IdC user and verify every STS account and
-   role. Remove overlapping legacy assignments only after replacement profiles
-   work; then run `retire-bootstrap.sh`.
-5. **Apply baselines account by account.** Run management through
-   `LandingZoneAdmin` and member accounts through `WorkloadAdmin`. The wrapper
-   may make valid partial progress before an error; fix the cause and rerun it
-   idempotently. **Do not attach baseline security** until all four S3 account
-   Block Public Access settings are verified in that member account.
-6. **Create SCPs detached.** Run `scp-guardrails/deploy.sh` with no targets.
-   A healthy stack and six policies with zero targets changes no effective
-   workload permissions. Static `cfn-lint` is not the AWS parser; a change-set
-   rejection should produce no resources, and the template must be fixed and
-   validated rather than bypassed.
-7. **Attach SCPs incrementally.** Start in Test, one policy at a time. After
-   each attachment, exercise normal read/deploy/update/stop/delete and recovery
-   paths through the workload profile. For Prod, attach and prove a replacement
-   before detaching its legacy equivalent; overlapping denies intersect. Keep
-   management outside workload OUs as the recovery path.
-8. **Replace budgets without an alert gap.** Create the managed $20 Safety Net,
-   verify its live limit, notifications, and subscriber, allow temporary
-   coexistence, then delete the old unmanaged budget as a separate authorized
-   operation.
-9. **Choose GuardDuty scope deliberately.** This home default uses one detector
-   per account, not every SCP-allowed Region. Inspect ownership first; disable
-   rather than silently delete an unmanaged detector, then deploy and verify the
-   selected Region. A finding's detector Region is different from the remote
-   IP's geographic location.
-10. **Deploy quarantine only after workload compatibility review.** The default
-    creates automatic Test forecasted-$50 and Prod actual-$50 SCP actions with
-    manual release. Start with `ENABLE_REMEDIATION=false`. When ready for
-    active remediation: deploy the service-managed StackSet (cross-account role
-    to both OUs with auto-deployment), the self-managed StackSet (regional state
-    machines in all 5 Regions in the management account), and enable the
-    EventBridge forwarding rule. Verify with `test-remediation.sh` before
-    relying on automatic triggers. No Lambda functions are created in any mode.
-11. **Optionally deploy scheduled switching** from the appropriate workload SSO
-    profile after its independent review.
+- an SSO profile name;
+- the exact allowed operation; and
+- explicit approval before security-sensitive mutations.
 
-Management-only phases can be paused ahead of workload login: permanent identity
-creation, the management baseline, detached SCP creation, the managed budget,
-and management GuardDuty can be completed and verified independently. Do not
-retire bootstrap, remove legacy workload access, mutate member baselines, attach
-workload SCPs, or arm quarantine until the relevant workload profiles have been
-tested.
+Never send an assistant access keys, SSO tokens, or cache files.
 
-Every CloudFormation deployment in this workflow uses an SSO profile. The IAM
-break-glass principal is never used to run CloudFormation.
+Operating loop for both manual and assisted use:
 
-## CloudTrail decision
+1. **Identify** the account, Region, and resource.
+2. **Inspect** current state with read-only APIs.
+3. **Preview** what will change.
+4. **Mutate one boundary at a time.**
+5. **Verify through the service API.**
+6. **Stop on mismatch.**
 
-This starter intentionally configures **no organization trail**. The accepted
-default is CloudTrail **Event History**: free access to the last 90 days of
-management events in each account and Region. This is adequate for lightweight,
-short-window troubleshooting, but its limitations are accepted explicitly:
-there is no organization-wide aggregation, no retention beyond 90 days, no
-data events, no Insights events, and no independently protected central archive.
-Event History must be searched separately in each account/Region. Add a secured
-organization trail or CloudTrail Lake only when the retention, investigation,
-and cost requirements justify it; reconcile existing trails first to avoid
-surprise duplicate delivery and charges.
+</details>
 
-## Security boundaries and residual risk
+<details>
+<summary><strong>CloudTrail decision</strong></summary>
 
-- `LandingZoneAdmin` can manage approved Organizations, Budgets, baseline, and
-  CloudFormation operations. Its IAM lifecycle and `PassRole` permissions are
-  limited to four fixed cost-quarantine roles whose normal lifecycle uses the
-  boundary created by the identity stack; it cannot pass a role to
-  CloudFormation.
-- `IdentityCenterAdmin` is inherently an escalation-capable role: it can change
-  permission sets and assignments. A short session and deliberate use reduce
-  exposure, but switching to it on the same management identity is not a new MFA
-  factor.
-- `BillingReadOnly` uses AWS `AWSBillingReadOnlyAccess` in management for the
-  workload user; it replaces the broader legacy `job-function/Billing` group
-  assignment.
-- `WorkloadAdmin` uses AWS `AdministratorAccess` in assigned workload accounts.
-  Separate users prevent accidental administrative crossover, not compromise of
-  either user.
-- Budget evaluation and quarantine lag cost ingestion and are damage limiters,
-  not hard real-time spend caps.
-- Service-specific credentials may not share the same enforcement properties as
-  ordinary IAM sessions. Avoid long-lived credentials and rely on cost alerts as
-  a backstop.
+This starter configures **no organization trail**. The default is CloudTrail
+**Event History**: free access to 90 days of management events per
+account/Region. No aggregation, no retention beyond 90 days, no data events.
+Event History must be searched separately in each account/Region. Add a trail
+only when retention and cost requirements justify it.
 
-This repository deliberately favors a small, understandable design. Treat every
-policy as reviewable source, test failure and recovery paths, and adapt it to the
-actual organization rather than treating the examples as guarantees.
+</details>
+
+<details>
+<summary><strong>Security boundaries and residual risk</strong></summary>
+
+- `LandingZoneAdmin` manages Organizations, Budgets, and CloudFormation. Cannot
+  pass roles to CloudFormation.
+- `IdentityCenterAdmin` is escalation-capable (can change assignments). Keep
+  sessions short.
+- `WorkloadAdmin` uses `AdministratorAccess` in workload accounts only. Separate
+  users prevent accidental crossover.
+- Budget evaluation lags cost ingestion. SCPs are the real-time boundary.
+- This repository favors a small, understandable design over completeness.
+
+</details>
+
+## License
+
+[To be determined — review before publishing]
+
+## Contributing
+
+This is a personal infrastructure project shared as a starting point. Forks and
+adaptations are encouraged. Issues and discussions welcome for questions about
+the approach. PRs for documentation improvements, bug fixes, or universally
+sensible additions are considered.
