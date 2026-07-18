@@ -76,7 +76,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ec2NextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId ? $states.result.Reservations[].Instances[].InstanceId : [] %}"
+              ec2Instances: "{% $append([], $states.result.Reservations[].Instances[].InstanceId ? $states.result.Reservations[].Instances[].InstanceId : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -131,7 +131,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ec2NextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId ? $states.result.Reservations[].Instances[].InstanceId : [] %}"
+              ec2Instances: "{% $append([], $states.result.Reservations[].Instances[].InstanceId ? $states.result.Reservations[].Instances[].InstanceId : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -150,7 +150,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               asgNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName ? $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName : [] %}"
+              asgGroups: "{% $append([], $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName ? $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -216,7 +216,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               asgNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName ? $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName : [] %}"
+              asgGroups: "{% $append([], $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName ? $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -235,7 +235,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ecsClusterNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              ecsClusters: "{% $states.result.ClusterArns ? $states.result.ClusterArns : [] %}"
+              ecsClusters: "{% $append([], $states.result.ClusterArns ? $states.result.ClusterArns : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -271,7 +271,7 @@ Resources:
                   Assign:
                     ecsClusterArn: "{% $states.input %}"
                     ecsServiceNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-                    ecsServices: "{% $states.result.ServiceArns ? $states.result.ServiceArns : [] %}"
+                    ecsServices: "{% $append([], $states.result.ServiceArns ? $states.result.ServiceArns : []) %}"
                   Output: "{}"
                   Retry:
                     - ErrorEquals: [States.ALL]
@@ -338,7 +338,7 @@ Resources:
                     RoleArn: "{% $remediationRoleArn %}"
                   Assign:
                     ecsServiceNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-                    ecsServices: "{% $states.result.ServiceArns ? $states.result.ServiceArns : [] %}"
+                    ecsServices: "{% $append([], $states.result.ServiceArns ? $states.result.ServiceArns : []) %}"
                   Output: "{}"
                   Retry:
                     - ErrorEquals: [States.ALL]
@@ -368,7 +368,7 @@ Resources:
               RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ecsClusterNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
-              ecsClusters: "{% $states.result.ClusterArns ? $states.result.ClusterArns : [] %}"
+              ecsClusters: "{% $append([], $states.result.ClusterArns ? $states.result.ClusterArns : []) %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
