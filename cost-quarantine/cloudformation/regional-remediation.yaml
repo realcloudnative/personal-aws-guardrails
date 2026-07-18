@@ -53,7 +53,7 @@ Resources:
       DefinitionSubstitutions:
         RemediationRoleName: !Ref TestRemediationRoleName
       Definition:
-        Comment: !Sub "Single-region remediation: EC2 stop, ASG and ECS scale-to-zero (${AWS::Region})."
+        Comment: !Sub "Single-region remediation: ECS scale-to-zero, ASG scale-to-zero, EC2 stop (${AWS::Region})."
         QueryLanguage: JSONata
         TimeoutSeconds: 1800
         StartAt: ExtractTarget
@@ -62,7 +62,7 @@ Resources:
             Type: Pass
             Assign:
               remediationRoleArn: "{% 'arn:aws:iam::' & ($states.input.targetAccountId ? $states.input.targetAccountId : $states.input.detail.requestParameters.Definition.ScpActionDefinition.TargetIds[0]) & ':role/${RemediationRoleName}' %}"
-            Next: Ec2DescribeInstances
+            Next: EcsListClusters
           Ec2DescribeInstances:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
@@ -116,7 +116,7 @@ Resources:
             Choices:
               - Next: Ec2DescribeInstancesPage
                 Condition: "{% $exists($ec2NextToken) and $ec2NextToken != null %}"
-            Default: AsgDescribeGroups
+            Default: Done
           Ec2DescribeInstancesPage:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
@@ -205,7 +205,7 @@ Resources:
             Choices:
               - Next: AsgDescribeGroupsPage
                 Condition: "{% $exists($asgNextToken) and $asgNextToken != null %}"
-            Default: EcsListClusters
+            Default: Ec2DescribeInstances
           AsgDescribeGroupsPage:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:autoscaling:describeAutoScalingGroups
@@ -357,7 +357,7 @@ Resources:
             Choices:
               - Next: EcsListClustersPage
                 Condition: "{% $exists($ecsClusterNextToken) and $ecsClusterNextToken != null %}"
-            Default: Done
+            Default: AsgDescribeGroups
           EcsListClustersPage:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:ecs:listClusters
