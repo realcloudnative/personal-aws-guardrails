@@ -110,7 +110,7 @@ agentic-age-aware.
 | `codebuild:*` | CodeBuild | ⚠️ Maybe | Build minutes: $0.005-0.20/min depending on compute type; builds left running; **GPU instances available** | Deny large/GPU compute types? No SCP condition key for compute type. Monitor build duration. |
 | `codepipeline:*` | CodePipeline | ⚠️ Maybe | $1/active pipeline/mo (V1) or $0.002/action (V2) | Low cost. |
 | `codedeploy:*` | CodeDeploy | ⚠️ Maybe | Free for EC2/Lambda; ECS blue/green is free | No cost risk. |
-| `codecommit:*` | CodeCommit | ❌ Deprecated | **AWS deprecated CodeCommit July 2024**. No new repos. | **Remove from allowlist.** Dead service. |
+| `codecommit:*` | CodeCommit | ✅ Yes | Free for first 5 users; deep IAM/VPC/CloudTrail integration; most AWS-native git option | No cost risk at home scale. Returned to full GA Nov 2025. |
 | `codeartifact:*` | CodeArtifact | ⚠️ Maybe | Storage ($0.05/GB/mo) + requests ($0.05/10K requests) | Low cost unless hoarding many packages. |
 
 ### Data & Analytics
@@ -161,8 +161,12 @@ agentic-age-aware.
 
 | Namespace | Reason |
 |---|---|
-| `codecommit:*` | Deprecated by AWS (July 2024). Dead service. |
 | `cognito-sync:*` | Deprecated. Legacy mobile sync. |
+
+**Note:** `codecommit:*` was initially flagged for removal based on the July 2024
+deprecation. AWS reversed this in November 2025 — CodeCommit returned to full GA
+with active investment (Git LFS Q1 2026, regional expansion Q3 2026). It stays in
+the allowlist as the most AWS-native git service for IAM-integrated workflows.
 
 ### Strong candidates for removal
 
@@ -278,7 +282,7 @@ condition only at OU level where we need service-specific region exceptions.
 
 ## Proposed execution order
 
-1. **Quick wins**: Remove `codecommit`, `cognito-sync` from allowlist; upgrade networking denies to mid-string wildcards (`"ec2:*NatGateway*"`, `"ec2:*Vpn*"`, `"ec2:*TransitGateway*"`)
+1. **Quick wins**: Remove `cognito-sync` from allowlist; upgrade networking denies to mid-string wildcards (`"ec2:*NatGateway*"`, `"ec2:*Vpn*"`, `"ec2:*TransitGateway*"`)
 2. **Evaluate removals**: Decide on `elasticfilesystem`, `route53resolver`, `apprunner`, `mediaconvert`
 3. **Bedrock model restriction**: Use `NotResource` to restrict model invocation to approved providers only (e.g., Anthropic, Amazon)
 4. **Add OU-level denies**: Bedrock provisioned throughput, Lambda provisioned concurrency, S3 Transfer Acceleration, CloudTrail trail creation, EFS creation (if kept in allowlist), Route 53 resolver endpoints (if kept)
