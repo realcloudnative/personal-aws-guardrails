@@ -162,10 +162,10 @@ flowchart TD
     Opinionated --> O3[No managed databases / clusters]
     Opinionated --> O4[No recurring “best-practice” extras]
 
-    classDef structure fill:#4a72c4,stroke:#22345f,color:#ffffff;
-    classDef policy fill:#2f9e52,stroke:#155d2c,color:#ffffff;
-    classDef universalItem fill:#b8e6c4,stroke:#2f9e52,color:#0f2e1a;
-    classDef opinionatedItem fill:#f6c17a,stroke:#c07715,color:#3d2606;
+    classDef structure fill:#bcd0ee,stroke:#3b5b92,color:#1a2b45;
+    classDef policy fill:#a8dcb8,stroke:#2f7d43,color:#12331d;
+    classDef universalItem fill:#d9f0e0,stroke:#5a9e6f,color:#12331d;
+    classDef opinionatedItem fill:#f8d9b0,stroke:#b3701f,color:#4a2e08;
 
     class Root,Prod,Test structure;
     class Universal,Opinionated policy;
