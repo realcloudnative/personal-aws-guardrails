@@ -135,8 +135,9 @@ Organization root
     └── test account         ← experiments and higher change frequency
 ```
 
-SCPs do not restrict the management account. That is deliberate: management is
-the recovery boundary if a member-account policy is wrong.
+SCPs never apply to the management account—AWS excludes it by design, even if a
+policy tries to target it. This project relies on that: the management account
+stays the recovery boundary if a member-account policy is wrong.
 
 ### Two functional SCP layers
 
