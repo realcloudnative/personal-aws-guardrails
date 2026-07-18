@@ -254,6 +254,43 @@ undo operator mitigation. The regional state machines are idempotent; if they
 re-trigger on the same budget period, they will attempt to stop resources that
 may have already been stopped.
 
+## Testing without a budget trigger
+
+`test-remediation.sh` proves the full state machine path without waiting for a
+real budget threshold. It launches a t3.nano in the Test account, starts the
+regional state machine directly with `targetAccountId` as input, verifies the
+instance is stopped, and terminates it.
+
+```bash
+AWS_PROFILE=home-mgmt-landing TEST_PROFILE=home-test-admin \
+  ./test-remediation.sh
+```
+
+The default test Region is `eu-central-1`. Override with `REGION=us-east-1`.
+
+Requirements:
+- Both management and workload SSO sessions active (separate users/browsers)
+- `LandingZoneAdmin` needs `states:StartExecution` on `home-cost-quarantine-*`
+- Test launches must comply with active SCPs: IMDSv2 required, EBS encryption
+  required, instance size ≤ small
+
+To test the full EventBridge trigger chain (attaches the SCP and fires all 5
+regional state machines), manually execute the budget action:
+
+```bash
+AWS_PROFILE=home-mgmt-landing
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+aws budgets execute-budget-action \
+  --account-id "$ACCOUNT_ID" \
+  --budget-name home-cost-quarantine-test \
+  --action-id <test-action-id-from-stack-outputs> \
+  --execution-type EXECUTE_BUDGET_ACTION \
+  --region us-east-1
+```
+
+This is a real quarantine: it attaches the SCP immediately. Use
+`REVERSE_BUDGET_ACTION` to release afterward.
+
 ## Limitations
 
 1. Budgets uses delayed billing data and may trigger hours after spend occurs.
