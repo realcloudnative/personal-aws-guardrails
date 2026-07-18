@@ -1,24 +1,32 @@
-# cloud-mgmt
+# AWS Cost Guardrails for the Agentic Age
 
-**Cost and security guardrails for personal AWS accounts in the agentic age.**
+**Keep AI-assisted cloud experimentation within the realities of a personal budget.**
 
 Your coding agent offers to “make this production-ready.” It adds a NAT Gateway,
 an Application Load Balancer, an RDS instance, several KMS customer-managed
-keys, and a monitoring dashboard. Every choice is defensible in an enterprise.
-Together, they can turn a hobby project into a recurring bill before a budget
-alert catches up.
+keys, and a monitoring dashboard. Each choice is defensible in an enterprise,
+where a few dollars of baseline spend may be immaterial. In a personal account,
+those same defaults can consume an entire monthly budget without adding value to
+the project.
 
-`cloud-mgmt` puts hard boundaries around that outcome. It uses AWS Organizations
-service control policies (SCPs) to prevent unwanted resources, AWS Budgets to
-contain spend, and multi-region Step Functions to stop what is already running.
+`cloud-mgmt` adds layered controls to reduce the likelihood and impact of that
+outcome. AWS Organizations service control policies (SCPs) prevent selected
+resource patterns, AWS Budgets contain further activity after a threshold, and
+multi-region Step Functions stop supported resources that are already running.
+
+> [!WARNING]
+> This is risk reduction, not a watertight spending cap. Guardrails are better
+> than no guardrails, and a contained incident is better than an uncontained one—but
+> either can still cost money. Read [What this does not solve](#what-this-does-not-solve)
+> before relying on the controls.
 
 ```console
 $ aws ec2 create-nat-gateway --subnet-id subnet-abc123
 An error occurred (UnauthorizedOperation): explicit deny in a service control policy
 ```
 
-> **The core idea:** constrain not only the blast radius of stolen credentials,
-> but also the blast radius of a fully authorized, well-intentioned agent doing
+> **The core idea:** reduce not only the blast radius of stolen credentials, but
+> also the blast radius of a fully authorized, well-intentioned agent doing
 > something you did not ask for—or did not notice in time.
 
 ## Why this exists
@@ -311,7 +319,7 @@ control exists:
 Every deny should document its intent, expected cost, and a safe alternative.
 That makes forks deliberate rather than cargo-culted.
 
-## Honest limitations
+## What this does not solve
 
 - **SCPs do not grant permissions.** IAM and resource policies still determine
   what an identity may do inside the SCP boundary.
@@ -328,8 +336,6 @@ That makes forks deliberate rather than cargo-culted.
   customer-managed keys may be appropriate in another home lab.
 - **AWS services and pricing change.** Re-review the allowlist and cost assumptions
   periodically.
-- **No license has been selected yet.** Resolve this before treating the project
-  as publication-ready open source.
 
 ## Recommended rollout
 
@@ -372,4 +378,4 @@ disagree, and how the behavior can be tested safely.
 
 ## License
 
-To be determined before public release.
+Released under the [MIT No Attribution (MIT-0) license](./LICENSE).
