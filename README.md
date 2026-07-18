@@ -38,21 +38,16 @@ multi-region Step Functions stop supported resources that are already running.
 
 Most cloud guardrails assume either stolen credentials or a person making a
 mistake. I also want to account for automation acting with exactly the permissions
-I gave it.
-
-I use coding agents to build infrastructure. They often reach for familiar
-enterprise defaults: high availability, managed services, dedicated networking,
-and extra monitoring. Those choices may be perfectly reasonable at work. At
-home, they can add a recurring bill without making the project more useful.
-
-The failure is usually mundane: a cost instruction drops out of context, one
-expensive resource hides in a large generated change, or a retry loop runs longer
-than expected. By the time billing data catches up, the API calls have already
-succeeded.
-
-An SCP turns a preference into an API boundary. If an agent attempts a denied
-pattern, AWS rejects the request before the resource exists. The agent must use a
-cheaper design or stop and ask.
+I gave it. I use coding agents to build infrastructure, and they often reach for
+familiar enterprise defaults: high availability, managed services, dedicated
+networking, and extra monitoring. Those choices may be perfectly reasonable at
+work; at home, they can add a recurring bill without making the project more
+useful. The failure is usually mundane: a cost instruction drops out of context,
+one expensive resource hides in a large generated change, or a retry loop runs
+longer than expected. By the time billing data catches up, the API calls have
+already succeeded. An SCP turns a preference into an API boundary: if an agent
+attempts a denied pattern, AWS rejects the request before the resource exists,
+so the agent must use a cheaper design or stop and ask.
 
 ## Who this is for
 
