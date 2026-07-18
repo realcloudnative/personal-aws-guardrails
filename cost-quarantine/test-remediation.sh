@@ -56,8 +56,9 @@ printf 'Launching t3.nano test instance...\n'
 instance_id=$(aws --profile "$TEST_PROFILE" --region "$REGION" ec2 run-instances \
   --image-id "$ami_id" \
   --instance-type t3.nano \
-  --min-count 1 --max-count 1 \
+  --count 1 \
   "${subnet_arg[@]}" \
+  --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":8,"VolumeType":"gp3","Encrypted":true}}]' \
   --metadata-options "HttpTokens=required,HttpEndpoint=enabled" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=quarantine-test},{Key=home:test,Value=remediation}]" \
   --query 'Instances[0].InstanceId' --output text)

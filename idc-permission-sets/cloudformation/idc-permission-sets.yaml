@@ -192,9 +192,13 @@ Resources:
               "Effect": "Allow",
               "Action": [
                 "states:CreateStateMachine", "states:UpdateStateMachine", "states:DeleteStateMachine",
+                "states:StartExecution", "states:DescribeExecution",
                 "states:TagResource", "states:UntagResource"
               ],
-              "Resource": "arn:${AWS::Partition}:states:*:${ManagementAccountId}:stateMachine:home-cost-quarantine-*"
+              "Resource": [
+                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:stateMachine:home-cost-quarantine-*",
+                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:execution:home-cost-quarantine-*:*"
+              ]
             },
             {
               "Sid": "ManageQuarantineLogs",
