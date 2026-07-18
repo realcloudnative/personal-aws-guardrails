@@ -69,6 +69,32 @@ still blocks `Subscribe` unless `aws:CalledViaLast` is
 The service allowlist still permits the `cloudtrail:*` and `guardduty:*` service
 prefixes; permitting a service through an SCP grants no IAM permission by itself.
 
+## Quarantine remediation role protection
+
+The baseline-security SCP includes a `ProtectQuarantineRemediationRole` statement
+that prevents workload administrators from modifying or deleting the
+`home-cost-quarantine-remediation` role deployed by the cost-quarantine
+service-managed StackSet. This ensures the remediation state machines can always
+assume the cross-account role regardless of workload-account IAM changes.
+
+Denied actions on `arn:aws:iam::*:role/home-cost-quarantine-remediation`:
+
+- `iam:DeleteRole`
+- `iam:DeleteRolePolicy`
+- `iam:PutRolePolicy`
+- `iam:UpdateAssumeRolePolicy`
+- `iam:AttachRolePolicy`
+- `iam:DetachRolePolicy`
+
+The exemption `arn:aws:iam::*:role/stacksets-exec-*` allows the service-managed
+StackSet execution role to continue managing the remediation role's lifecycle
+(creation, updates, deletion during StackSet decommissioning). No other
+principal in the workload account can bypass this deny.
+
+This statement has no effect unless baseline-security is attached to the relevant
+OU. Deploy the cost-quarantine StackSet before or after attachment; the SCP
+protects the role once attached.
+
 ## Effective policy behavior and `FullAWSAccess`
 
 Keep AWS's default `FullAWSAccess` SCP attached at every applicable level. These

@@ -56,7 +56,7 @@ member-account policy mistakes.
 | [`account-baseline`](./account-baseline) | Enable S3 account Block Public Access, EBS default encryption, IMDSv2 defaults, and optional GuardDuty | CLI + CloudFormation | Each account |
 | [`scp-guardrails`](./scp-guardrails) | Region, service, instance-size, baseline-security, and cost guardrails | CloudFormation (`AWS::Organizations::Policy`) | Management account |
 | [`budget-alarms`](./budget-alarms) | One managed $20 organization-wide Safety Net | CloudFormation (`AWS::Budgets::Budget`) | Management account |
-| [`cost-quarantine`](./cost-quarantine) | Automatic SCP containment at Test forecasted $50 and Prod actual $50; optional remediation disabled | Native Budgets actions + Organizations SCP | Management account by default |
+| [`cost-quarantine`](./cost-quarantine) | Automatic SCP containment at Test forecasted $50 and Prod actual $50; optional multi-region resource remediation (zero Lambda) | Native Budgets actions + Organizations SCP + StackSets + Step Functions | Management account + workload accounts |
 | [`scheduled-switch`](./scheduled-switch) | Turn selected expensive resources off while idle | SAM / Lambda | Workload accounts |
 
 Review every component README and template before use. Account IDs, OU IDs,
@@ -277,8 +277,12 @@ before moving on.
    IP's geographic location.
 10. **Deploy quarantine only after workload compatibility review.** The default
     creates automatic Test forecasted-$50 and Prod actual-$50 SCP actions with
-    manual release. Keep `ENABLE_REMEDIATION=false`; no Test role, SNS, Lambda,
-    logs, or Step Functions resources should exist.
+    manual release. Start with `ENABLE_REMEDIATION=false`. When ready for
+    active remediation: deploy the service-managed StackSet (cross-account role
+    to both OUs with auto-deployment), the self-managed StackSet (regional state
+    machines in all 5 Regions in the management account), and enable the
+    EventBridge forwarding rule. Verify with `test-remediation.sh` before
+    relying on automatic triggers. No Lambda functions are created in any mode.
 11. **Optionally deploy scheduled switching** from the appropriate workload SSO
     profile after its independent review.
 

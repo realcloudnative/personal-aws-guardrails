@@ -1,10 +1,11 @@
 # cost-quarantine
 
-A conservative, SCP-only home spend containment mechanism for both workload
-accounts. It runs in the Organizations management account and uses native AWS
-Budgets actions; billing delay means it is a damage limiter, not a real-time cap.
+Automatic SCP-based spend containment for both workload accounts, with optional
+multi-region resource remediation. Runs in the Organizations management account
+using native AWS Budgets actions. Billing delay means this is a damage limiter,
+not a real-time spend cap.
 
-## Approved default behavior
+## Default behavior (SCP-only)
 
 ```text
 Test linked-account FORECASTED spend >= $50
@@ -26,51 +27,104 @@ With the default `EnableRemediation=false`, CloudFormation creates only:
 - Test $50 forecasted budget and automatic SCP action;
 - Prod $50 actual budget and automatic SCP action.
 
-It creates **no** EventBridge rules, Step Functions state machines, StackSets,
-IAM execution roles, log groups, SNS topics, or Lambda functions.
+No EventBridge rules, Step Functions state machines, StackSets, execution roles,
+log groups, SNS topics, or Lambda functions are created.
 
 ## Optional multi-region remediation (`EnableRemediation=true`)
 
-When enabled, the system automatically stops running resources in the Test
-account after the SCP is attached. This is best-effort damage control:
+When enabled, the system automatically stops running resources in the triggered
+account after the SCP is attached. This is best-effort damage control with zero
+Lambda functions.
+
+### Trigger chain
 
 ```text
-Budget action attaches SCP to Test account
-  → CloudTrail logs ExecuteBudgetAction
+Budget threshold exceeded
+  → automatic SCP attachment to workload account
+  → CloudTrail logs ExecuteBudgetAction in us-east-1
   → EventBridge rule in us-east-1 matches the event
-  → Rule forwards to the default bus in all 5 remediation Regions
+  → Rule forwards to default bus in 4 other remediation Regions
   → Each Region's local EventBridge rule starts its state machine
-  → State machine assumes the Test cross-account role
+  → State machine assumes cross-account remediation role
   → EC2: stop running instances
   → ASG: scale all groups to min=0, desired=0
   → ECS: scale all services to desiredCount=0
 ```
 
-### Architecture (zero Lambda)
+### Architecture
 
-| Component | Location | Purpose |
-|---|---|---|
-| `cost-quarantine.yaml` | Management, us-east-1 | SCP, budgets, actions, EventBridge forwarding rule |
-| `regional-remediation.yaml` | StackSet, all Regions | Per-region state machine, EventBridge rule, execution role, log group |
-| `test-remediation-role.yaml` | Test account | Cross-account role with stop/scale-to-zero permissions |
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Management account                                                      │
+│                                                                         │
+│  us-east-1 (cost-quarantine.yaml)                                       │
+│  ├─ Quarantine SCP                                                      │
+│  ├─ Budget action role (bounded)                                        │
+│  ├─ Test $50 forecasted budget + SCP action                             │
+│  ├─ Prod $50 actual budget + SCP action                                 │
+│  ├─ EventBridge forwarding rule (→ 4 other Region buses)                │
+│  ├─ Global execution role (assumed by state machines)                   │
+│  └─ Global trigger role (assumed by EventBridge)                        │
+│                                                                         │
+│  All 5 Regions (regional-remediation.yaml via self-managed StackSet)    │
+│  ├─ State machine (JSONata, SDK integrations, dynamic Credentials)      │
+│  ├─ EventBridge rule (starts state machine on forwarded event)          │
+│  └─ Log group                                                           │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 
-The state machines use **Step Functions SDK integrations** with **JSONata** for
-all data transformation. There are no Lambda functions, no JSONPath, and no
-inline code anywhere in the remediation path.
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Test + Prod accounts (test-remediation-role.yaml via service-managed    │
+│                        StackSet, auto-deployment enabled)               │
+│                                                                         │
+│  home-cost-quarantine-remediation role                                  │
+│  ├─ Trusts management execution role                                    │
+│  ├─ ec2:StopInstances, ec2:DescribeInstances                           │
+│  ├─ autoscaling:DescribeAutoScalingGroups, UpdateAutoScalingGroup       │
+│  └─ ecs:ListClusters, ListServices, UpdateService                      │
+│                                                                         │
+│  SCP-protected: workload admins cannot modify or delete this role       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Component summary
+
+| Component | Stack / StackSet | Location | Purpose |
+|---|---|---|---|
+| `cost-quarantine.yaml` | `home-cost-quarantine` stack | Management, us-east-1 | SCP, budgets, actions, conditional EventBridge forwarder + roles |
+| `regional-remediation.yaml` | `home-cost-quarantine-regional` self-managed StackSet | Management, all 5 Regions | Per-region state machine, EventBridge rule, log group |
+| `test-remediation-role.yaml` | `home-cost-quarantine-test-role` service-managed StackSet | Test + Prod OUs | Cross-account remediation role with auto-deployment |
+
+### State machine design
 
 Each regional state machine:
-- Runs as `STANDARD` (up to 30 minutes per Region)
+
+- Uses **Step Functions SDK integrations** with **JSONata** query language
+- Accepts `targetAccountId` from the EventBridge event or direct invocation
 - Uses `Credentials: { RoleArn }` on every SDK Task for cross-account access
 - Handles pagination via Choice states checking NextToken
 - Catches and continues past individual stop/scale failures
+- Runs as `STANDARD` (supports up to 30 minutes per Region)
 - Has no delete, terminate, or remove permissions
+
+There are no Lambda functions, no JSONPath, and no inline code anywhere in the
+remediation path.
 
 ### Why no RDS?
 
 The service allowlist SCP already denies RDS creation. The quarantine SCP
 additionally denies `rds:CreateDBInstance`, `rds:CreateDBCluster`,
 `rds:StartDBInstance`, and `rds:StartDBCluster`. No RDS instances can exist in
-the Test account under this SCP design, so no RDS remediation is needed.
+workload accounts under this SCP design, so no RDS remediation is needed.
+
+### SCP protection of the remediation role
+
+The `ProtectQuarantineRemediationRole` statement in the baseline-security SCP
+denies workload admins from modifying or deleting the
+`home-cost-quarantine-remediation` role. The service-managed StackSet execution
+role (`stacksets-exec-*`) is exempted so CloudFormation can manage the role's
+lifecycle. See [`scp-guardrails/README.md`](../scp-guardrails/README.md#quarantine-remediation-role-protection)
+for details.
 
 ## Containment policy
 
@@ -94,15 +148,15 @@ account or AWS service-linked roles.
 ./validate.sh
 ```
 
-This runs `cfn-lint` on all three templates, shell syntax checks, Lambda/RDS/SSM
+Runs `cfn-lint` on all three templates, shell syntax checks, Lambda/RDS/SSM
 prohibitions, JSONPath prohibitions, conditional-resource gating, and structural
-safety invariants. It makes no AWS calls.
+safety invariants. Makes no AWS calls.
 
-## Deploy the approved SCP-only mode
+## Deploy the default SCP-only mode
 
 Prerequisites:
 
-- permanent Identity Center stack deployed in `eu-central-1` by default;
+- permanent Identity Center stack deployed;
 - `LandingZoneAdmin` SSO profile in management;
 - active, distinct Test and Prod organization accounts;
 - notification email supplied locally and never committed.
@@ -124,7 +178,15 @@ ENABLE_REMEDIATION=false
 
 ## Deploy with multi-region remediation
 
-This additionally requires a Test WorkloadAdmin profile:
+Additional prerequisites:
+
+- StackSet bootstrap roles deployed (`AWSCloudFormationStackSetAdministrationRole`
+  + `AWSCloudFormationStackSetExecutionRole` via `home-stackset-bootstrap` stack)
+- Organizations trusted access for CloudFormation StackSets enabled
+- `LandingZoneAdmin` permissions include: `events:PutRule`, `events:PutTargets`,
+  `iam:CreateRole` for quarantine roles, `iam:PassRole` to events/states/budgets
+  services
+- A workload SSO profile (`WorkloadAdmin`) for the Test account
 
 ```bash
 ENABLE_REMEDIATION=true \
@@ -132,11 +194,14 @@ ENABLE_REMEDIATION=true \
 ```
 
 The wrapper will:
-1. Deploy the Test cross-account role (via the Test profile).
-2. Deploy the management stack with the EventBridge forwarding rule enabled.
-3. Create or update the regional StackSet with state machines in all
-   remediation Regions (via the management profile, self-managed StackSet
-   targeting the management account in multiple Regions).
+
+1. Deploy the management stack with the EventBridge forwarding rule and roles
+   enabled (via `LandingZoneAdmin`).
+2. Create or update the service-managed StackSet deploying the cross-account
+   remediation role to both Test and Prod OUs (auto-deployment enabled for new
+   accounts).
+3. Create or update the self-managed StackSet deploying regional state machines
+   to the management account in all 5 remediation Regions.
 
 Monitor StackSet progress:
 
@@ -145,6 +210,27 @@ aws cloudformation list-stack-set-operations \
   --stack-set-name home-cost-quarantine-regional \
   --region us-east-1
 ```
+
+## Testing remediation
+
+`test-remediation.sh` exercises the state machine without waiting for a budget
+trigger:
+
+```bash
+export AWS_PROFILE=home-mgmt-landing
+./test-remediation.sh <test-account-id> <test-sso-profile>
+```
+
+The script:
+
+1. Launches a `t3.nano` in the Test account (via the workload profile).
+2. Directly starts the regional state machine with `targetAccountId` input.
+3. Polls until the state machine completes.
+4. Verifies the instance is stopped.
+5. Terminates the instance.
+
+This validates the full cross-account remediation path without triggering the
+budget or attaching the SCP.
 
 ## Manual release
 
@@ -183,13 +269,17 @@ may have already been stopped.
    regional state machine execution.
 7. Step Functions SDK integrations cannot make cross-region calls; each
    regional state machine only remediates resources in its own Region.
+8. The service-managed StackSet targets both Test and Prod OUs; the
+   remediation role exists in all workload accounts regardless of which
+   account triggered quarantine.
 
 ## Files
 
 | File | Deployment | Purpose |
 |---|---|---|
-| `cloudformation/cost-quarantine.yaml` | Management, us-east-1 | SCP, dual budgets/actions, conditional EventBridge forwarder |
-| `cloudformation/regional-remediation.yaml` | StackSet, all Regions | Per-region state machine, EventBridge rule, execution role |
-| `cloudformation/test-remediation-role.yaml` | Test account | Cross-account role for regional state machines |
+| `cloudformation/cost-quarantine.yaml` | Management stack, us-east-1 | SCP, dual budgets/actions, conditional EventBridge forwarder + roles |
+| `cloudformation/regional-remediation.yaml` | Self-managed StackSet, all 5 Regions | Per-region state machine, EventBridge rule, log group |
+| `cloudformation/test-remediation-role.yaml` | Service-managed StackSet, Test + Prod OUs | Cross-account remediation role (auto-deployment) |
 | `deploy.sh` | Local | Preflight, deployment, and StackSet management |
 | `validate.sh` | Local | Offline lint and safety checks |
+| `test-remediation.sh` | Local | End-to-end remediation test without budget trigger |
