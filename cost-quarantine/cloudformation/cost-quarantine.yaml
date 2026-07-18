@@ -274,13 +274,15 @@ Resources:
               ArnLike:
                 aws:SourceArn: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
       Policies:
-        - PolicyName: assume-test-remediation-role
+        - PolicyName: assume-workload-remediation-role
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action: sts:AssumeRole
-                Resource: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+                  - !Sub arn:${AWS::Partition}:iam::${ProdAccountId}:role/${TestRemediationRoleName}
         - PolicyName: logging
           PolicyDocument:
             Version: "2012-10-17"
@@ -373,6 +375,7 @@ Resources:
           requestParameters:
             BudgetName:
               - !Ref TestBudgetName
+              - !Ref ProdBudgetName
       Targets:
         - Id: forward-us-west-2
           Arn: !Sub arn:${AWS::Partition}:events:us-west-2:${AWS::AccountId}:event-bus/default

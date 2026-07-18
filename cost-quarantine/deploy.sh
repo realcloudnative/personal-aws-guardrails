@@ -99,7 +99,7 @@ QUARANTINE_BOUNDARY_ARN="$(aws cloudformation describe-stacks \
   fail "identity stack '$IDENTITY_STACK_NAME' in $IDENTITY_REGION has no CostQuarantineRoleBoundaryArn output"
 
 if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
-  # Discover the Test OU ID for the service-managed StackSet
+  # Discover both workload OU IDs for the service-managed StackSet
   root_id="$(aws organizations list-roots \
     --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
     --query 'Roots[0].Id' --output text)"
@@ -107,10 +107,15 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
     --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
     --parent-id "$root_id" \
     --query "OrganizationalUnits[?Name=='Test'].Id | [0]" --output text)"
+  prod_ou_id="$(aws organizations list-organizational-units-for-parent \
+    --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
+    --parent-id "$root_id" \
+    --query "OrganizationalUnits[?Name=='Prod'].Id | [0]" --output text)"
   [[ "$test_ou_id" =~ ^ou- ]] || fail "could not find Test OU under root $root_id"
+  [[ "$prod_ou_id" =~ ^ou- ]] || fail "could not find Prod OU under root $root_id"
 
-  printf "Deploying Test remediation role via service-managed StackSet '%s' to Test OU %s...\n" \
-    "$TEST_ROLE_STACKSET_NAME" "$test_ou_id"
+  printf "Deploying remediation role via service-managed StackSet '%s' to OUs: %s, %s\n" \
+    "$TEST_ROLE_STACKSET_NAME" "$test_ou_id" "$prod_ou_id"
 
   test_template_body="$(cat "$TEST_TEMPLATE")"
 
@@ -128,6 +133,8 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
       --parameters \
         "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
         "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
+      --deployment-targets "OrganizationalUnitIds=$test_ou_id,$prod_ou_id" \
+      --regions "$REGION" \
       --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" || true
   else
     aws cloudformation create-stack-set \
@@ -144,7 +151,7 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
     aws cloudformation create-stack-instances \
       --profile "$MANAGEMENT_PROFILE" --region "$REGION" \
       --stack-set-name "$TEST_ROLE_STACKSET_NAME" \
-      --deployment-targets "OrganizationalUnitIds=$test_ou_id" \
+      --deployment-targets "OrganizationalUnitIds=$test_ou_id,$prod_ou_id" \
       --regions "$REGION" \
       --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0"
   fi
@@ -202,12 +209,9 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
       --administration-role-arn "$admin_role_arn" \
       --execution-role-name AWSCloudFormationStackSetExecutionRole \
       --parameters \
-        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
-        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
         "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
         "ParameterKey=RegionalExecutionRoleArn,ParameterValue=$regional_role_arn" \
         "ParameterKey=RegionalTriggerRoleArn,ParameterValue=$regional_trigger_role_arn" \
-        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN" \
       --operation-preferences "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" \
       --regions "${region_array[@]}" \
       --accounts "$management_account_id" || true
@@ -222,12 +226,9 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
       --administration-role-arn "$admin_role_arn" \
       --execution-role-name AWSCloudFormationStackSetExecutionRole \
       --parameters \
-        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
-        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
         "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
         "ParameterKey=RegionalExecutionRoleArn,ParameterValue=$regional_role_arn" \
-        "ParameterKey=RegionalTriggerRoleArn,ParameterValue=$regional_trigger_role_arn" \
-        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN"
+        "ParameterKey=RegionalTriggerRoleArn,ParameterValue=$regional_trigger_role_arn"
 
     printf '  Creating stack instances in all remediation Regions...\n'
     aws cloudformation create-stack-instances \

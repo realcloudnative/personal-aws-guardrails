@@ -1,10 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Test-account side of the home cost-quarantine workflow. Deploy only in Test.
-  Creates the narrowly scoped role assumed by the StackSet-deployed regional
-  Step Functions state machines via SDK integration Credentials. It permits
-  enumeration, stop, and scale-to-zero for EC2, ASG, and ECS only. It does not
-  permit delete, terminate, or remove operations.
+  Workload-account side of the home cost-quarantine workflow. Deployed via
+  service-managed StackSet to all workload OUs. Creates the narrowly scoped role
+  assumed by the management-account regional Step Functions state machines via
+  SDK integration Credentials. It permits enumeration, stop, and scale-to-zero
+  for EC2, ASG, and ECS only. It does not permit delete, terminate, or remove
+  operations.
 
 Parameters:
   ManagementAccountId:

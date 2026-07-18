@@ -6,21 +6,11 @@ Description: >
   Zero Lambda functions.
 
 Parameters:
-  TestAccountId:
-    Type: String
-    AllowedPattern: "^[0-9]{12}$"
-    Description: Test account targeted by remediation.
-
-  ManagementAccountId:
-    Type: String
-    AllowedPattern: "^[0-9]{12}$"
-    Description: Management account that owns the quarantine SCP and forwards events. Used by deploy.sh for StackSet coordination.
-
   TestRemediationRoleName:
     Type: String
     Default: home-cost-quarantine-remediation
     AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
-    Description: Cross-account role name in the Test account.
+    Description: Cross-account role name in the workload accounts.
 
   RegionalExecutionRoleArn:
     Type: String
@@ -29,11 +19,6 @@ Parameters:
   RegionalTriggerRoleArn:
     Type: String
     Description: ARN of the global IAM trigger role deployed by the management stack.
-
-  QuarantineRoleBoundaryArn:
-    Type: String
-    AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/home-cost-quarantine-role-boundary$"
-    Description: Permissions boundary from the Identity Center stack.
 
 Metadata:
   cfn-lint:
@@ -50,8 +35,6 @@ Resources:
 
   RegionalStateMachine:
     Type: AWS::StepFunctions::StateMachine
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Metadata:
       cfn-lint:
         config:
@@ -68,13 +51,18 @@ Resources:
         IncludeExecutionData: false
         Level: ERROR
       DefinitionSubstitutions:
-        TestRemediationRoleArn: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+        RemediationRoleName: !Ref TestRemediationRoleName
       Definition:
         Comment: !Sub "Single-region remediation: EC2 stop, ASG and ECS scale-to-zero (${AWS::Region})."
         QueryLanguage: JSONata
         TimeoutSeconds: 1800
-        StartAt: Ec2DescribeInstances
+        StartAt: ExtractTarget
         States:
+          ExtractTarget:
+            Type: Pass
+            Assign:
+              remediationRoleArn: "{% 'arn:aws:iam::' & ($states.input.targetAccountId ? $states.input.targetAccountId : $states.input.detail.requestParameters.Definition.ScpActionDefinition.TargetIds[0]) & ':role/${RemediationRoleName}' %}"
+            Next: Ec2DescribeInstances
           Ec2DescribeInstances:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
@@ -85,7 +73,7 @@ Resources:
                     - running
               MaxResults: 1000
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ec2NextToken: "{% $states.result.NextToken %}"
               ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId %}"
@@ -110,7 +98,7 @@ Resources:
             Arguments:
               InstanceIds: "{% $ec2Instances %}"
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Output: "{}"
             Retry:
               - ErrorEquals: [States.ALL]
@@ -140,7 +128,7 @@ Resources:
               MaxResults: 1000
               NextToken: "{% $ec2NextToken %}"
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ec2NextToken: "{% $states.result.NextToken %}"
               ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId %}"
@@ -159,7 +147,7 @@ Resources:
             Arguments:
               MaxRecords: 100
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               asgNextToken: "{% $states.result.NextToken %}"
               asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName %}"
@@ -195,7 +183,7 @@ Resources:
                     MinSize: 0
                     DesiredCapacity: 0
                   Credentials:
-                    RoleArn: ${TestRemediationRoleArn}
+                    RoleArn: "{% $remediationRoleArn %}"
                   Output: "{}"
                   Retry:
                     - ErrorEquals: [States.ALL]
@@ -225,7 +213,7 @@ Resources:
               MaxRecords: 100
               NextToken: "{% $asgNextToken %}"
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               asgNextToken: "{% $states.result.NextToken %}"
               asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName %}"
@@ -244,7 +232,7 @@ Resources:
             Arguments:
               MaxResults: 100
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ecsClusterNextToken: "{% $states.result.NextToken %}"
               ecsClusters: "{% $states.result.ClusterArns %}"
@@ -279,7 +267,7 @@ Resources:
                     Cluster: "{% $states.input %}"
                     MaxResults: 100
                   Credentials:
-                    RoleArn: ${TestRemediationRoleArn}
+                    RoleArn: "{% $remediationRoleArn %}"
                   Assign:
                     ecsClusterArn: "{% $states.input %}"
                     ecsServiceNextToken: "{% $states.result.NextToken %}"
@@ -316,7 +304,7 @@ Resources:
                           Service: "{% $states.input %}"
                           DesiredCount: 0
                         Credentials:
-                          RoleArn: ${TestRemediationRoleArn}
+                          RoleArn: "{% $remediationRoleArn %}"
                         Output: "{}"
                         Retry:
                           - ErrorEquals: [States.ALL]
@@ -347,7 +335,7 @@ Resources:
                     MaxResults: 100
                     NextToken: "{% $ecsServiceNextToken %}"
                   Credentials:
-                    RoleArn: ${TestRemediationRoleArn}
+                    RoleArn: "{% $remediationRoleArn %}"
                   Assign:
                     ecsServiceNextToken: "{% $states.result.NextToken %}"
                     ecsServices: "{% $states.result.ServiceArns %}"
@@ -377,7 +365,7 @@ Resources:
               MaxResults: 100
               NextToken: "{% $ecsClusterNextToken %}"
             Credentials:
-              RoleArn: ${TestRemediationRoleArn}
+              RoleArn: "{% $remediationRoleArn %}"
             Assign:
               ecsClusterNextToken: "{% $states.result.NextToken %}"
               ecsClusters: "{% $states.result.ClusterArns %}"
