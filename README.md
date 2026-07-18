@@ -36,21 +36,19 @@ multi-region Step Functions stop supported resources that are already running.
 
 ## Why this exists
 
-Most cloud guardrails are built around two assumptions: credentials may be
-stolen, or a person may make a mistake. I want to cover a third, increasingly
-ordinary case—automation acting with permissions I deliberately granted, but
-producing infrastructure I did not actually mean to approve. Coding agents tend
-to reach for patterns that are sensible at work: high availability, managed
-services, dedicated networking, and additional monitoring. In a personal AWS
-account, those choices can create a baseline bill without making the project
-more useful.
+Cloud guardrails usually assume one of two threats: stolen credentials, or a
+person making a mistake. This project adds a third that has become common with
+coding agents—software using the admin permissions I gave it to build something I
+would not have approved if I had looked closely. The agent is doing its job. It
+just defaults to what works in a company, like high availability, managed
+databases, and dedicated networking, none of which I want on a personal bill.
 
-The cause is often mundane. A cost instruction falls out of context, an expensive
-resource is buried in generated infrastructure code, or a retry loop runs longer
-than expected. Billing data arrives after the API calls have succeeded. An SCP
-turns a preference into an API boundary: when an agent attempts a denied pattern,
-AWS rejects the request before the resource exists, leaving the agent to choose a
-cheaper design or stop and ask.
+Instructions and code review help, but they are not a boundary. A cost note can
+fall out of the agent's context, an expensive line can sit unnoticed in a big
+diff, or a loop can keep retrying until something sticks. Billing data shows up
+hours later, long after the resource was created. An SCP closes that gap: the
+denied API call fails before anything exists, so the agent has to pick a cheaper
+path or come back and ask.
 
 ## Who this is for
 
