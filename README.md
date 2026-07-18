@@ -91,31 +91,34 @@ The system applies three cost-control stages around separately authenticated
 management and workload identities:
 
 ```mermaid
-flowchart LR
+flowchart TB
     Agent[Human or coding agent] --> API[AWS API request]
 
     subgraph Prevention[1 · Prevention]
-      Root[Org-root SCPs<br/>universal boundaries]
-      OU[OU SCP<br/>opinionated boundaries]
+      direction TB
+      Root[Org-root SCPs<br/>universal boundaries] --> OU[OU SCP<br/>opinionated boundaries]
     end
 
-    API --> Root --> OU
+    API --> Root
     OU -->|allowed| Resource[Workload resource]
     OU -->|explicit deny| Never[Resource never exists]
 
+    Resource -. spend observed .-> Budget
+
     subgraph Containment[2 · Containment]
+      direction TB
       Budget[AWS Budget threshold] --> Quarantine[Quarantine SCP<br/>blocks new spend paths]
     end
 
+    Quarantine --> Event
+
     subgraph Remediation[3 · Remediation]
+      direction TB
       Event[EventBridge] --> SF[Regional Step Functions]
       SF --> ECS[ECS services → 0]
       SF --> ASG[ASGs → 0]
       SF --> EC2[Standalone EC2 → stopped]
     end
-
-    Resource -. spend observed .-> Budget
-    Quarantine --> Event
 ```
 
 Most mistakes stop at prevention. Containment and remediation exist for allowed
