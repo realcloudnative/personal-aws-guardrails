@@ -45,9 +45,9 @@ enterprise defaults: high availability, managed services, dedicated networking,
 and extra monitoring. Those choices may be perfectly reasonable at work. At
 home, they can add a recurring bill without making the project more useful.
 
-The failure is usually mundane. A cost instruction drops out of context. A large
-generated change hides one expensive resource. A retry loop runs longer than
-expected. By the time billing data catches up, the API calls have already
+The failure is usually mundane: a cost instruction drops out of context, one
+expensive resource hides in a large generated change, or a retry loop runs longer
+than expected. By the time billing data catches up, the API calls have already
 succeeded.
 
 An SCP turns a preference into an API boundary. If an agent attempts a denied
