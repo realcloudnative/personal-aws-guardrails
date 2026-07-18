@@ -14,6 +14,10 @@ outcome. AWS Organizations service control policies (SCPs) prevent selected
 resource patterns, AWS Budgets contain further activity after a threshold, and
 multi-region Step Functions stop supported resources that are already running.
 
+> **The core idea:** reduce not only the blast radius of stolen credentials, but
+> also the blast radius of a fully authorized, well-intentioned agent doing
+> something you did not ask for—or did not notice in time.
+
 > [!WARNING]
 > This is risk reduction, not a watertight spending cap. Guardrails are better
 > than no guardrails, and a contained incident is better than an uncontained one—but
@@ -29,15 +33,6 @@ multi-region Step Functions stop supported resources that are already running.
 > customize, stage, and verify the controls for your accounts. You remain
 > responsible for the resulting architecture, approvals, recovery path, and bill.
 > Read [What this does not solve](#what-this-does-not-solve) before relying on it.
-
-```console
-$ aws ec2 create-nat-gateway --subnet-id subnet-abc123
-An error occurred (UnauthorizedOperation): explicit deny in a service control policy
-```
-
-> **The core idea:** reduce not only the blast radius of stolen credentials, but
-> also the blast radius of a fully authorized, well-intentioned agent doing
-> something you did not ask for—or did not notice in time.
 
 ## Why this exists
 
