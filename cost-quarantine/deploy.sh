@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Deploy the native SCP-only cost quarantine by default. Optional Test active
-# remediation is created only with ENABLE_REMEDIATION=true.
+# Deploy the native SCP-only cost quarantine by default. Optional multi-region
+# active remediation is created only with ENABLE_REMEDIATION=true: it deploys
+# the Test cross-account role, the management forwarding rule, and a StackSet
+# of per-region state machines. Zero Lambda functions.
 #
 # Usage: ./deploy.sh <test-account-id> <prod-account-id> <notification-email> [test-sso-profile]
 # Required environment:
@@ -12,6 +14,7 @@
 #   IDENTITY_REGION                    IdC stack Region (default eu-central-1)
 #   TEST_QUARANTINE_THRESHOLD          default 50 USD, FORECASTED
 #   PROD_QUARANTINE_THRESHOLD          default 50 USD, ACTUAL
+#   REMEDIATION_REGIONS                default us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
 
 set -euo pipefail
 
@@ -33,15 +36,16 @@ REGION="${REGION:-us-east-1}"
 IDENTITY_REGION="${IDENTITY_REGION:-eu-central-1}"
 MANAGEMENT_STACK_NAME="${STACK_NAME:-home-cost-quarantine}"
 TEST_ROLE_STACK_NAME="${TEST_ROLE_STACK_NAME:-home-cost-quarantine-remediation-role}"
+REGIONAL_STACKSET_NAME="${REGIONAL_STACKSET_NAME:-home-cost-quarantine-regional}"
 IDENTITY_STACK_NAME="${IDENTITY_STACK_NAME:-home-idc-permission-sets}"
 TEST_QUARANTINE_THRESHOLD="${TEST_QUARANTINE_THRESHOLD:-50}"
 PROD_QUARANTINE_THRESHOLD="${PROD_QUARANTINE_THRESHOLD:-50}"
 REMEDIATION_REGIONS="${REMEDIATION_REGIONS:-us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1}"
-MAX_PAGES_PER_SERVICE="${MAX_PAGES_PER_SERVICE:-100}"
 TEST_REMEDIATION_ROLE_NAME="${TEST_REMEDIATION_ROLE_NAME:-home-cost-quarantine-remediation}"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MANAGEMENT_TEMPLATE="$ROOT_DIR/cloudformation/cost-quarantine.yaml"
 TEST_TEMPLATE="$ROOT_DIR/cloudformation/test-remediation-role.yaml"
+REGIONAL_TEMPLATE="$ROOT_DIR/cloudformation/regional-remediation.yaml"
 
 [[ "$TEST_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || fail "test-account-id must be exactly 12 digits"
 [[ "$PROD_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || fail "prod-account-id must be exactly 12 digits"
@@ -114,7 +118,7 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
   [[ "$test_caller_arn" == arn:aws:sts::*:assumed-role/AWSReservedSSO_WorkloadAdmin_*/* ]] ||
     fail "Test profile is not WorkloadAdmin: $test_caller_arn"
 
-  printf "Deploying optional Test remediation role stack '%s'...\n" "$TEST_ROLE_STACK_NAME"
+  printf "Deploying Test remediation role stack '%s'...\n" "$TEST_ROLE_STACK_NAME"
   aws cloudformation deploy \
     --profile "$TEST_PROFILE" \
     --region "$REGION" \
@@ -126,7 +130,7 @@ if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
       "ManagementAccountId=$management_account_id" \
       "TestRemediationRoleName=$TEST_REMEDIATION_ROLE_NAME"
 else
-  printf 'Active remediation is disabled: no workload-account calls and no Test remediation role deployment.\n'
+  printf 'Active remediation is disabled: no workload-account calls, no regional StackSet.\n'
 fi
 
 printf "Deploying management quarantine stack '%s' with remediation=%s...\n" \
@@ -147,13 +151,74 @@ aws cloudformation deploy \
     "ProdQuarantineThreshold=$PROD_QUARANTINE_THRESHOLD" \
     "EnableRemediation=$ENABLE_REMEDIATION" \
     "RemediationRegions=$REMEDIATION_REGIONS" \
-    "MaxPagesPerService=$MAX_PAGES_PER_SERVICE" \
     "TestRemediationRoleName=$TEST_REMEDIATION_ROLE_NAME"
 
-printf '\nManagement stack outputs (save both action IDs for manual release):\n'
+printf '\nManagement stack outputs:\n'
 aws cloudformation describe-stacks \
   --profile "$MANAGEMENT_PROFILE" \
   --region "$REGION" \
   --stack-name "$MANAGEMENT_STACK_NAME" \
   --query 'Stacks[0].Outputs[].{Key:OutputKey,Value:OutputValue}' \
   --output table
+
+if [[ "$ENABLE_REMEDIATION" == "true" ]]; then
+  printf '\nDeploying regional remediation StackSet "%s" to: %s\n' \
+    "$REGIONAL_STACKSET_NAME" "$REMEDIATION_REGIONS"
+
+  # Convert comma-separated regions to JSON array for --regions
+  IFS=',' read -r -a region_array <<< "$REMEDIATION_REGIONS"
+
+  template_body="$(cat "$REGIONAL_TEMPLATE")"
+
+  # Create or update the StackSet
+  if aws cloudformation describe-stack-set \
+      --profile "$MANAGEMENT_PROFILE" \
+      --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" >/dev/null 2>&1; then
+    printf 'Updating existing StackSet...\n'
+    aws cloudformation update-stack-set \
+      --profile "$MANAGEMENT_PROFILE" \
+      --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --template-body "$template_body" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --permission-model SELF_MANAGED \
+      --parameters \
+        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
+        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
+        "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
+        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN" \
+      --operation-preferences \
+        "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0" \
+      --regions "${region_array[@]}" \
+      --accounts "$management_account_id" || true
+  else
+    printf 'Creating new StackSet...\n'
+    aws cloudformation create-stack-set \
+      --profile "$MANAGEMENT_PROFILE" \
+      --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --template-body "$template_body" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --permission-model SELF_MANAGED \
+      --parameters \
+        "ParameterKey=TestAccountId,ParameterValue=$TEST_ACCOUNT_ID" \
+        "ParameterKey=ManagementAccountId,ParameterValue=$management_account_id" \
+        "ParameterKey=TestRemediationRoleName,ParameterValue=$TEST_REMEDIATION_ROLE_NAME" \
+        "ParameterKey=QuarantineRoleBoundaryArn,ParameterValue=$QUARANTINE_BOUNDARY_ARN"
+
+    printf 'Creating stack instances in all remediation Regions...\n'
+    aws cloudformation create-stack-instances \
+      --profile "$MANAGEMENT_PROFILE" \
+      --region "$REGION" \
+      --stack-set-name "$REGIONAL_STACKSET_NAME" \
+      --regions "${region_array[@]}" \
+      --accounts "$management_account_id" \
+      --operation-preferences \
+        "RegionConcurrencyType=PARALLEL,FailureToleranceCount=0"
+  fi
+
+  printf '\nStackSet operation submitted. Monitor with:\n'
+  printf '  aws cloudformation list-stack-set-operations --stack-set-name %s --region %s\n' \
+    "$REGIONAL_STACKSET_NAME" "$REGION"
+fi

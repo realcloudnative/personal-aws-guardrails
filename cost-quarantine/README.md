@@ -8,10 +8,10 @@ Budgets actions; billing delay means it is a damage limiter, not a real-time cap
 
 ```text
 Test linked-account FORECASTED spend >= $50
-  └─ automatic Budget action attaches home-cost-quarantine to Test
+  └─ automatic Budget action attaches home-cost-quarantine SCP to Test
 
 Prod linked-account ACTUAL spend >= $50
-  └─ automatic Budget action attaches home-cost-quarantine to Prod
+  └─ automatic Budget action attaches home-cost-quarantine SCP to Prod
 ```
 
 The same generic SCP can be attached independently to either account. Each
@@ -26,9 +26,51 @@ With the default `EnableRemediation=false`, CloudFormation creates only:
 - Test $50 forecasted budget and automatic SCP action;
 - Prod $50 actual budget and automatic SCP action.
 
-It creates **no** SNS topic, Lambda function, Step Functions state machine, log
-group, management remediation role, or Test cross-account remediation role.
-The deployment wrapper makes no workload-account API calls in this mode.
+It creates **no** EventBridge rules, Step Functions state machines, StackSets,
+IAM execution roles, log groups, SNS topics, or Lambda functions.
+
+## Optional multi-region remediation (`EnableRemediation=true`)
+
+When enabled, the system automatically stops running resources in the Test
+account after the SCP is attached. This is best-effort damage control:
+
+```text
+Budget action attaches SCP to Test account
+  → CloudTrail logs ExecuteBudgetAction
+  → EventBridge rule in us-east-1 matches the event
+  → Rule forwards to the default bus in all 5 remediation Regions
+  → Each Region's local EventBridge rule starts its state machine
+  → State machine assumes the Test cross-account role
+  → EC2: stop running instances
+  → ASG: scale all groups to min=0, desired=0
+  → ECS: scale all services to desiredCount=0
+```
+
+### Architecture (zero Lambda)
+
+| Component | Location | Purpose |
+|---|---|---|
+| `cost-quarantine.yaml` | Management, us-east-1 | SCP, budgets, actions, EventBridge forwarding rule |
+| `regional-remediation.yaml` | StackSet, all Regions | Per-region state machine, EventBridge rule, execution role, log group |
+| `test-remediation-role.yaml` | Test account | Cross-account role with stop/scale-to-zero permissions |
+
+The state machines use **Step Functions SDK integrations** with **JSONata** for
+all data transformation. There are no Lambda functions, no JSONPath, and no
+inline code anywhere in the remediation path.
+
+Each regional state machine:
+- Runs as `STANDARD` (up to 30 minutes per Region)
+- Uses `Credentials: { RoleArn }` on every SDK Task for cross-account access
+- Handles pagination via Choice states checking NextToken
+- Catches and continues past individual stop/scale failures
+- Has no delete, terminate, or remove permissions
+
+### Why no RDS?
+
+The service allowlist SCP already denies RDS creation. The quarantine SCP
+additionally denies `rds:CreateDBInstance`, `rds:CreateDBCluster`,
+`rds:StartDBInstance`, and `rds:StartDBCluster`. No RDS instances can exist in
+the Test account under this SCP design, so no RDS remediation is needed.
 
 ## Containment policy
 
@@ -52,9 +94,9 @@ account or AWS service-linked roles.
 ./validate.sh
 ```
 
-This runs `cfn-lint`, shell syntax checks, conditional-resource checks, and
-static safety invariants. `shellcheck` is used when installed. It makes no AWS
-calls.
+This runs `cfn-lint` on all three templates, shell syntax checks, Lambda/RDS/SSM
+prohibitions, JSONPath prohibitions, conditional-resource gating, and structural
+safety invariants. It makes no AWS calls.
 
 ## Deploy the approved SCP-only mode
 
@@ -80,9 +122,29 @@ PROD_QUARANTINE_THRESHOLD=50       # ACTUAL
 ENABLE_REMEDIATION=false
 ```
 
-The wrapper verifies the management role/account, both active workload
-accounts, the identity-stack boundary output, and the offline invariants before
-CloudFormation runs. Save both action IDs from the stack outputs.
+## Deploy with multi-region remediation
+
+This additionally requires a Test WorkloadAdmin profile:
+
+```bash
+ENABLE_REMEDIATION=true \
+  ./deploy.sh <test-account-id> <prod-account-id> <notification-email> <test-sso-profile>
+```
+
+The wrapper will:
+1. Deploy the Test cross-account role (via the Test profile).
+2. Deploy the management stack with the EventBridge forwarding rule enabled.
+3. Create or update the regional StackSet with state machines in all
+   remediation Regions (via the management profile, self-managed StackSet
+   targeting the management account in multiple Regions).
+
+Monitor StackSet progress:
+
+```bash
+aws cloudformation list-stack-set-operations \
+  --stack-set-name home-cost-quarantine-regional \
+  --region us-east-1
+```
 
 ## Manual release
 
@@ -102,46 +164,32 @@ aws budgets execute-budget-action \
 ```
 
 This detaches the SCP for the selected action. It does not restart anything or
-undo operator mitigation. If the Budgets reversal API is unavailable, an
-authorized management operator may detach the output SCP from the affected
-account and then reconcile the Budget action history.
-
-## Remediation is present but disabled
-
-The existing Test-only SNS/Lambda/Standard Step Functions implementation remains
-in the template behind `EnableRemediationResources`. It is not part of the
-approved rollout and may be restructured later.
-
-Only an explicit opt-in creates it:
-
-```bash
-# Not approved for the current rollout.
-ENABLE_REMEDIATION=true \
-  ./deploy.sh <test-account-id> <prod-account-id> <notification-email> <test-workload-profile>
-```
-
-That mode first deploys the separate Test remediation-role stack and then
-creates the conditional management remediation resources. Do not use it until
-the workflow has been reviewed and explicitly approved.
+undo operator mitigation. The regional state machines are idempotent; if they
+re-trigger on the same budget period, they will attempt to stop resources that
+may have already been stopped.
 
 ## Limitations
 
 1. Budgets uses delayed billing data and may trigger hours after spend occurs.
 2. Forecasts are estimates and can change sharply during a month.
-3. Existing resources continue running in SCP-only mode; containment blocks
-   selected new/start/invoke actions but does not stop anything.
+3. Existing resources continue running until the state machines stop them;
+   containment blocks selected new/start/invoke actions immediately.
 4. Storage, snapshots, data transfer, Elastic IPs, NAT gateways, and other
-   ongoing resources can continue charging until an operator acts.
+   ongoing resources continue charging until an operator acts.
 5. Update APIs retained for shutdown compatibility can also scale resources up
    when a principal already has permission. Identity controls remain essential.
-6. A reversed action should be reviewed before reset/reuse; do not assume a new
-   billing period is an automatic operational release procedure.
+6. Cross-region EventBridge forwarding is best-effort via CloudTrail; there
+   may be a delay of seconds to minutes between the SCP attachment and
+   regional state machine execution.
+7. Step Functions SDK integrations cannot make cross-region calls; each
+   regional state machine only remediates resources in its own Region.
 
 ## Files
 
-| File | Default deployment | Purpose |
+| File | Deployment | Purpose |
 |---|---|---|
-| `cloudformation/cost-quarantine.yaml` | Management | SCP, dual budgets/actions, conditional remediation |
-| `cloudformation/test-remediation-role.yaml` | Not deployed | Optional Test remediation role |
-| `deploy.sh` | Management only by default | Preflight and deployment wrapper |
-| `validate.sh` | Local only | Offline lint and safety checks |
+| `cloudformation/cost-quarantine.yaml` | Management, us-east-1 | SCP, dual budgets/actions, conditional EventBridge forwarder |
+| `cloudformation/regional-remediation.yaml` | StackSet, all Regions | Per-region state machine, EventBridge rule, execution role |
+| `cloudformation/test-remediation-role.yaml` | Test account | Cross-account role for regional state machines |
+| `deploy.sh` | Local | Preflight, deployment, and StackSet management |
+| `validate.sh` | Local | Offline lint and safety checks |

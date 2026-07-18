@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Per-region cost-quarantine remediation state machine. Deployed via StackSet
+  to each remediation Region. Triggers on forwarded ExecuteBudgetAction events
+  and performs bounded stop/scale-to-zero using SDK integrations with JSONata.
+  Zero Lambda functions.
+
+Parameters:
+  TestAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    Description: Test account targeted by remediation.
+
+  ManagementAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    Description: Management account that owns the quarantine SCP and forwards events. Used by deploy.sh for StackSet coordination.
+
+  TestRemediationRoleName:
+    Type: String
+    Default: home-cost-quarantine-remediation
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+    Description: Cross-account role name in the Test account.
+
+  QuarantineRoleBoundaryArn:
+    Type: String
+    AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/home-cost-quarantine-role-boundary$"
+    Description: Permissions boundary from the Identity Center stack.
+
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
+Resources:
+  RemediationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/states/home-cost-quarantine-regional-${AWS::Region}
+      RetentionInDays: 30
+
+  RegionalExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: home-cost-quarantine-regional-states
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: !Sub Regional remediation state machine execution role (${AWS::Region}).
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
+      Policies:
+        - PolicyName: assume-test-remediation-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+        - PolicyName: logging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  RegionalStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3601
+    Properties:
+      StateMachineName: home-cost-quarantine-regional
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt RegionalExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt RemediationLogGroup.Arn
+        IncludeExecutionData: false
+        Level: ERROR
+      DefinitionSubstitutions:
+        TestRemediationRoleArn: !Sub arn:${AWS::Partition}:iam::${TestAccountId}:role/${TestRemediationRoleName}
+      Definition:
+        Comment: !Sub "Single-region remediation: EC2 stop, ASG and ECS scale-to-zero (${AWS::Region})."
+        QueryLanguage: JSONata
+        TimeoutSeconds: 1800
+        StartAt: Ec2DescribeInstances
+        States:
+          Ec2DescribeInstances:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
+            Arguments:
+              Filters:
+                - Name: instance-state-name
+                  Values:
+                    - running
+              MaxResults: 1000
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              ec2NextToken: "{% $states.result.NextToken %}"
+              ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: Ec2StopCheck
+          Ec2StopCheck:
+            Type: Choice
+            Rules:
+              - Next: Ec2StopInstances
+                Condition: "{% $count($ec2Instances) > 0 %}"
+            Default: Ec2PaginateCheck
+          Ec2StopInstances:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ec2:stopInstances
+            Arguments:
+              InstanceIds: "{% $ec2Instances %}"
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Catch:
+              - ErrorEquals: [States.ALL]
+                Next: Ec2PaginateCheck
+            Next: Ec2PaginateCheck
+          Ec2PaginateCheck:
+            Type: Choice
+            Rules:
+              - Next: Ec2DescribeInstancesPage
+                Condition: "{% $exists($ec2NextToken) and $ec2NextToken != null %}"
+            Default: AsgDescribeGroups
+          Ec2DescribeInstancesPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
+            Arguments:
+              Filters:
+                - Name: instance-state-name
+                  Values:
+                    - running
+              MaxResults: 1000
+              NextToken: "{% $ec2NextToken %}"
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              ec2NextToken: "{% $states.result.NextToken %}"
+              ec2Instances: "{% $states.result.Reservations[].Instances[].InstanceId %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: Ec2StopCheck
+          AsgDescribeGroups:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:autoscaling:describeAutoScalingGroups
+            Arguments:
+              MaxRecords: 100
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              asgNextToken: "{% $states.result.NextToken %}"
+              asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: AsgScaleCheck
+          AsgScaleCheck:
+            Type: Choice
+            Rules:
+              - Next: AsgScaleGroups
+                Condition: "{% $count($asgGroups) > 0 %}"
+            Default: AsgPaginateCheck
+          AsgScaleGroups:
+            Type: Map
+            Items: "{% $asgGroups %}"
+            MaxConcurrency: 5
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: AsgUpdateGroup
+              States:
+                AsgUpdateGroup:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:autoscaling:updateAutoScalingGroup
+                  Arguments:
+                    AutoScalingGroupName: "{% $states.input %}"
+                    MinSize: 0
+                    DesiredCapacity: 0
+                  Credentials:
+                    RoleArn: ${TestRemediationRoleArn}
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Next: AsgGroupDone
+                  Next: AsgGroupDone
+                AsgGroupDone:
+                  Type: Pass
+                  End: true
+            Next: AsgPaginateCheck
+          AsgPaginateCheck:
+            Type: Choice
+            Rules:
+              - Next: AsgDescribeGroupsPage
+                Condition: "{% $exists($asgNextToken) and $asgNextToken != null %}"
+            Default: EcsListClusters
+          AsgDescribeGroupsPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:autoscaling:describeAutoScalingGroups
+            Arguments:
+              MaxRecords: 100
+              NextToken: "{% $asgNextToken %}"
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              asgNextToken: "{% $states.result.NextToken %}"
+              asgGroups: "{% $states.result.AutoScalingGroups[DesiredCapacity > 0].AutoScalingGroupName %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: AsgScaleCheck
+          EcsListClusters:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ecs:listClusters
+            Arguments:
+              MaxResults: 100
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              ecsClusterNextToken: "{% $states.result.NextToken %}"
+              ecsClusters: "{% $states.result.ClusterArns %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: EcsClusterCheck
+          EcsClusterCheck:
+            Type: Choice
+            Rules:
+              - Next: EcsProcessClusters
+                Condition: "{% $count($ecsClusters) > 0 %}"
+            Default: EcsClusterPaginateCheck
+          EcsProcessClusters:
+            Type: Map
+            Items: "{% $ecsClusters %}"
+            MaxConcurrency: 2
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: EcsListServices
+              States:
+                EcsListServices:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:ecs:listServices
+                  Arguments:
+                    Cluster: "{% $states.input %}"
+                    MaxResults: 100
+                  Credentials:
+                    RoleArn: ${TestRemediationRoleArn}
+                  Assign:
+                    ecsClusterArn: "{% $states.input %}"
+                    ecsServiceNextToken: "{% $states.result.NextToken %}"
+                    ecsServices: "{% $states.result.ServiceArns %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Next: EcsServiceCheck
+                EcsServiceCheck:
+                  Type: Choice
+                  Rules:
+                    - Next: EcsScaleServices
+                      Condition: "{% $count($ecsServices) > 0 %}"
+                  Default: EcsServicePaginateCheck
+                EcsScaleServices:
+                  Type: Map
+                  Items: "{% $ecsServices %}"
+                  MaxConcurrency: 5
+                  ItemProcessor:
+                    ProcessorConfig:
+                      Mode: INLINE
+                    StartAt: EcsUpdateService
+                    States:
+                      EcsUpdateService:
+                        Type: Task
+                        Resource: arn:aws:states:::aws-sdk:ecs:updateService
+                        Arguments:
+                          Cluster: "{% $ecsClusterArn %}"
+                          Service: "{% $states.input %}"
+                          DesiredCount: 0
+                        Credentials:
+                          RoleArn: ${TestRemediationRoleArn}
+                        Output: "{}"
+                        Retry:
+                          - ErrorEquals: [States.ALL]
+                            IntervalSeconds: 2
+                            MaxAttempts: 3
+                            BackoffRate: 2
+                            MaxDelaySeconds: 15
+                            JitterStrategy: FULL
+                        Catch:
+                          - ErrorEquals: [States.ALL]
+                            Next: EcsServiceDone
+                        Next: EcsServiceDone
+                      EcsServiceDone:
+                        Type: Pass
+                        End: true
+                  Next: EcsServicePaginateCheck
+                EcsServicePaginateCheck:
+                  Type: Choice
+                  Rules:
+                    - Next: EcsListServicesPage
+                      Condition: "{% $exists($ecsServiceNextToken) and $ecsServiceNextToken != null %}"
+                  Default: EcsClusterDone
+                EcsListServicesPage:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:ecs:listServices
+                  Arguments:
+                    Cluster: "{% $ecsClusterArn %}"
+                    MaxResults: 100
+                    NextToken: "{% $ecsServiceNextToken %}"
+                  Credentials:
+                    RoleArn: ${TestRemediationRoleArn}
+                  Assign:
+                    ecsServiceNextToken: "{% $states.result.NextToken %}"
+                    ecsServices: "{% $states.result.ServiceArns %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Next: EcsServiceCheck
+                EcsClusterDone:
+                  Type: Pass
+                  End: true
+            Next: EcsClusterPaginateCheck
+          EcsClusterPaginateCheck:
+            Type: Choice
+            Rules:
+              - Next: EcsListClustersPage
+                Condition: "{% $exists($ecsClusterNextToken) and $ecsClusterNextToken != null %}"
+            Default: Done
+          EcsListClustersPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:ecs:listClusters
+            Arguments:
+              MaxResults: 100
+              NextToken: "{% $ecsClusterNextToken %}"
+            Credentials:
+              RoleArn: ${TestRemediationRoleArn}
+            Assign:
+              ecsClusterNextToken: "{% $states.result.NextToken %}"
+              ecsClusters: "{% $states.result.ClusterArns %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: EcsClusterCheck
+          Done:
+            Type: Succeed
+
+  RegionalTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: home-cost-quarantine-regional-trigger
+      PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
+      Description: Allows EventBridge to start the regional remediation state machine.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: start-regional-state-machine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref RegionalStateMachine
+
+  RegionalTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: home-cost-quarantine-regional
+      Description: Starts regional remediation on forwarded ExecuteBudgetAction events.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.budgets
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - budgets.amazonaws.com
+          eventName:
+            - ExecuteBudgetAction
+      Targets:
+        - Id: start-regional-remediation
+          Arn: !Ref RegionalStateMachine
+          RoleArn: !GetAtt RegionalTriggerRole.Arn
+
+Outputs:
+  RegionalStateMachineArn:
+    Value: !Ref RegionalStateMachine
+  RegionalExecutionRoleArn:
+    Value: !GetAtt RegionalExecutionRole.Arn
