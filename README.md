@@ -21,8 +21,8 @@ already running.
 
 > [!WARNING]
 > This is risk reduction, not a watertight spending cap. Guardrails are better
-> than no guardrails, and a contained incident is better than an uncontained one—but
-> either can still cost money.
+> than no guardrails, and a contained incident is better than an uncontained one.
+> Either can still cost money.
 >
 > This project was written with AI assistance and is offered as a starting point,
 > not a prescription for every AWS account. Some controls address uncommon or
@@ -39,7 +39,7 @@ already running.
 
 Cloud guardrails usually assume one of two threats: stolen credentials, or a
 person making a mistake. This project adds a third that has become common with
-coding agents—software using the admin permissions I gave it to build something I
+coding agents: software using the admin permissions I gave it to build something I
 would not have approved if I had looked closely. The agent is doing its job. It
 just defaults to what works in a company, like high availability, managed
 databases, and dedicated networking, none of which I want on a personal bill.
@@ -80,7 +80,7 @@ It is small, reviewable, and opinionated.
 5. **Constrain valid automation, not only attackers.** Administrator permissions
    do not imply permission to create every AWS architecture pattern.
 6. **No long-lived workload credentials.** Workload accounts use Identity Center
-   sessions and service roles—not IAM users, access keys, SSH keys, or
+   sessions and service roles, not IAM users, access keys, SSH keys, or
    service-specific credentials.
 7. **Keep controls understandable and reversible.** Policies deploy detached by
    default, attachment is explicit, and the management account remains the
@@ -136,7 +136,7 @@ Organization root
     └── test account         ← experiments and higher change frequency
 ```
 
-SCPs never apply to the management account—AWS excludes it by design, even if a
+SCPs never apply to the management account. AWS excludes it by design, even if a
 policy tries to target it. This project relies on that: the management account
 stays the recovery boundary if a member-account policy is wrong.
 
@@ -175,13 +175,13 @@ flowchart TD
     class O1,O2,O3,O4 opinionatedItem;
 ```
 
-**Org root — organization-wide outer boundaries.** These define encryption and
+**Org root: organization-wide outer boundaries.** These define encryption and
 credential invariants, a coarse region ceiling, the set of services that may
 exist in this particular home environment, and no long-term capacity purchases.
 The security invariants are broadly reusable; forks should review the service
 allowlist against their own needs.
 
-**OU level — explicit opinionated defaults.** One policy makes cost choices easy
+**OU level: explicit opinionated defaults.** One policy makes cost choices easy
 to find and customize: no RDS, no load balancers, no customer-managed KMS keys,
 small EC2 sizes, and similar constraints. Some statements intentionally repeat
 org-root exclusions as defense in depth. Allowing such a service may therefore
@@ -249,7 +249,7 @@ workload SSO sessions.
 
 Architecture and tenets come first; the controls below are implementation
 choices, not universal truths. Prices are illustrative and vary by region and
-over time—verify current AWS pricing before relying on them.
+over time. Verify current AWS pricing before relying on them.
 
 ### Selected resources blocked
 
@@ -364,8 +364,8 @@ That makes forks deliberate rather than cargo-culted.
 
 **Why not use AWS Control Tower?**
 Control Tower suits a small startup, but it is already oversized for a home
-account. It layers on AWS Config to record and evaluate resource configurations—
-useful for company compliance, rarely needed at home—and that adds ongoing
+account. It layers on AWS Config to record and evaluate resource configurations,
+useful for company compliance, rarely needed at home, and that adds ongoing
 overhead. Config bills per configuration item recorded, so if you create and
 change many resources it can itself become a minor cost-overrun risk. This
 project stays lighter: a small set of readable templates you can inspect, fork,
@@ -375,7 +375,7 @@ reasonable next step.
 **Isn't an AWS Organization with OUs over-engineered for a personal setup?**
 An AWS Organization comes at no additional charge and is far lighter than
 Control Tower, so it adds structure without adding overhead. The OU level is not
-decoration—it is where SCPs attach, and SCPs are the whole point of this project.
+decoration. It is where SCPs attach, and SCPs are the whole point of this project.
 Whether you want two OUs with two accounts or a single OU with one account is up
 to you: this repository models two so you can separate Test from Prod, but a
 simple sandbox works fine with one.
@@ -383,7 +383,7 @@ simple sandbox works fine with one.
 **Wages are much lower where I live. Is this safe for me to use?**
 Judge it by what a bad month could cost you. As a rough heuristic: if an
 unexpected $100 charge would be a real hardship, do not put a payment-backed AWS
-account at risk at all—prefer the AWS Free Tier, a short-lived sandbox or training
+account at risk at all. Prefer the AWS Free Tier, a short-lived sandbox or training
 account, or a hard prepaid limit. If $100 would merely annoy you, this project can
 lower the odds and size of a surprise, but read
 [What this does not solve](#what-this-does-not-solve) first: it reduces risk
@@ -409,7 +409,7 @@ instruction is missed or a change slips through review.
 
 **Can I adopt only some of the components?**
 Yes. They are independent. Start with just `scp-guardrails`, add `budget-alarms`,
-and adopt `cost-quarantine` or `scheduled-switch` later—or never.
+and adopt `cost-quarantine` or `scheduled-switch` later, or never.
 
 ## Recommended rollout
 
