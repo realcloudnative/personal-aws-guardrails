@@ -344,8 +344,6 @@ That makes forks deliberate rather than cargo-culted.
 
 ## What this does not solve
 
-- **SCPs do not grant permissions.** IAM and resource policies still determine
-  what an identity may do inside the SCP boundary.
 - **The management account is outside SCP enforcement.** Protect its identities
   carefully; it can detach these policies.
 - **Budgets are delayed.** Billing ingestion can lag by hours. Quarantine is a
@@ -357,8 +355,9 @@ That makes forks deliberate rather than cargo-culted.
   public API traffic, Bedrock tokens, or S3 egress remain risks.
 - **This configuration reflects one person's trade-offs.** RDS, EFS, ALBs, or
   customer-managed keys may be appropriate in another home lab.
-- **AWS services and pricing change.** Re-review the allowlist and cost assumptions
-  periodically.
+- **AWS introduces new services.** A newly launched service may carry charges
+  beyond a personal budget and will not be in the deny list until you add it.
+  Re-review the allowlist when AWS launches services you might use.
 
 ## FAQ
 
@@ -366,16 +365,15 @@ That makes forks deliberate rather than cargo-culted.
 Control Tower suits a small startup, but it is already oversized for a home
 account. It layers on AWS Config to record and evaluate resource configurations,
 useful for company compliance, rarely needed at home, and that adds ongoing
-overhead. Config bills per configuration item recorded, so if you create and
-change many resources it can itself become a minor cost-overrun risk. This
-project stays lighter: a small set of readable templates you can inspect, fork,
+overhead. AWS Config bills per configuration item recorded, so in an active
+account it can itself become a cost. This project stays lighter: a small set of readable templates you can inspect, fork,
 and delete in an afternoon. If you later outgrow it, Control Tower remains a
 reasonable next step.
 
 **Isn't an AWS Organization with OUs over-engineered for a personal setup?**
 An AWS Organization comes at no additional charge and is far lighter than
-Control Tower, so it adds structure without adding overhead. The OU level is not
-decoration. It is where SCPs attach, and SCPs are the whole point of this project.
+Control Tower, so it adds structure without adding overhead. The OU level is
+where SCPs attach, and SCPs are the whole point of this project.
 Whether you want two OUs with two accounts or a single OU with one account is up
 to you: this repository models two so you can separate Test from Prod, but a
 simple sandbox works fine with one.
@@ -383,8 +381,8 @@ simple sandbox works fine with one.
 **Wages are much lower where I live. Is this safe for me to use?**
 Judge it by what a bad month could cost you. As a rough heuristic: if an
 unexpected $100 charge would be a real hardship, do not put a payment-backed AWS
-account at risk at all. Prefer the AWS Free Tier, a short-lived sandbox or training
-account, or a hard prepaid limit. If $100 would merely annoy you, this project can
+account at risk at all. Prefer the AWS Free Tier, a short-lived sandbox, or a training
+account. If $100 would merely annoy you, this project can
 lower the odds and size of a surprise, but read
 [What this does not solve](#what-this-does-not-solve) first: it reduces risk
 rather than removing it.
