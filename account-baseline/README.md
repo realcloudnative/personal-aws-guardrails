@@ -17,7 +17,7 @@ Every script requires `EXPECTED_ACCOUNT_ID` and refuses to mutate when the STS c
 
 ## Run order and account responsibilities
 
-Run `apply-account-baseline.sh` **before** the management-account operator attaches `home-guardrail-baseline-security`:
+Run `apply-account-baseline.sh` **before** the management-account operator attaches `paws-baseline-security`:
 
 ```text
 1. account-baseline in each account  ──►  2. SCP deployment/attachment from management

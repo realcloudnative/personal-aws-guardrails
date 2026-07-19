@@ -1,7 +1,7 @@
 # SCP Service Allowlist Analysis
 
 Comprehensive review of every IAM namespace currently permitted by the
-`home-guardrail-service-allowlist` SCP. The goal: identify what each service
+`paws-service-allowlist` SCP. The goal: identify what each service
 does, whether we need it, and what expensive resources lurk inside.
 
 ## Methodology

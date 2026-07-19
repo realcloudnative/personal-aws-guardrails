@@ -8,9 +8,9 @@ Description: >
 Parameters:
   PolicyNamePrefix:
     Type: String
-    Default: home-guardrail
+    Default: paws
     AllowedPattern: "^[A-Za-z0-9_-]{1,40}$"
-    Description: Generic policy-name prefix.
+    Description: Provenance prefix for policy names (identifies project-managed SCPs).
 
   OpinionatedCostGuardTargetIds:
     Type: String
@@ -40,7 +40,7 @@ Resources:
         - !Ref AWS::NoValue
       Tags:
         - Key: project
-          Value: cloud-mgmt
+          Value: personal-aws-guardrails
         - Key: component
           Value: scp-guardrails
         - Key: managed-by

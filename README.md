@@ -9,10 +9,11 @@ where a few dollars of baseline spend may be immaterial. In a personal account,
 those same defaults can consume an entire monthly budget without adding value to
 the project.
 
-`cloud-mgmt` adds layered controls to reduce the likelihood and impact of that
-outcome. AWS Organizations service control policies (SCPs) prevent selected
-resource patterns, AWS Budgets contain further activity after a threshold, and
-multi-region Step Functions stop supported resources that are already running.
+Personal AWS Guardrails (PAWS) adds layered controls to reduce the likelihood
+and impact of that outcome. AWS Organizations service control policies (SCPs)
+prevent selected resource patterns, AWS Budgets contain further activity after a
+threshold, and multi-region Step Functions stop supported resources that are
+already running.
 
 > **The core idea:** reduce not only the blast radius of stolen credentials, but
 > also the blast radius of a fully authorized, well-intentioned agent doing
@@ -195,10 +196,18 @@ require changing both the root allowlist and the OU policy.
 | [`budget-alarms`](./budget-alarms) | Organization-wide budget safety net | Management account |
 | [`idc-permission-sets`](./idc-permission-sets) | Separate management and workload identities | IAM Identity Center |
 | [`account-baseline`](./account-baseline) | S3 public-access block, EBS encryption, IMDSv2, optional GuardDuty | Each account |
-| [`scheduled-switch`](./scheduled-switch) | Optional scheduled resource shutdown | Workload accounts |
+| [`scheduled-switch`](./scheduled-switch) | Stop idle resources on a schedule so nothing runs (and bills) around the clock by accident | Workload accounts |
 
 The remediation path uses **zero Lambda functions**: Step Functions AWS SDK
 integrations, JSONata, EventBridge, and cross-account roles do the work.
+
+Prevention, containment, and remediation handle resources you did not want.
+[`scheduled-switch`](./scheduled-switch) handles resources you *do* want, but
+only some of the time: it powers eligible workloads down on a schedule so an
+instance left running overnight or over a holiday does not quietly accumulate
+cost. Timely shutdown is itself a guardrail for a personal account. This
+capability is also covered in a separate blog post; it is kept in this
+repository because it belongs to the same cost-discipline story.
 
 ## What success looks like
 
@@ -290,7 +299,7 @@ and future work are recorded in [`PLAN.md`](./PLAN.md).
 
 ```bash
 git clone <repository-url>
-cd cloud-mgmt
+cd personal-aws-guardrails
 
 cfn-lint scp-guardrails/cloudformation/*.yaml
 bash -n scp-guardrails/deploy.sh
@@ -350,6 +359,59 @@ That makes forks deliberate rather than cargo-culted.
   customer-managed keys may be appropriate in another home lab.
 - **AWS services and pricing change.** Re-review the allowlist and cost assumptions
   periodically.
+
+## FAQ
+
+**Why not use AWS Control Tower?**
+Control Tower is built for organizations onboarding many accounts with governed
+provisioning, dashboards, and a managed baseline. It also carries its own moving
+parts and cost overhead. This project targets the opposite end: one person, a
+couple of accounts, and a bill paid personally. It is a small set of readable
+CloudFormation templates and scripts you can inspect, fork, and delete in an
+afternoon—no managed service to adopt or pay for. If you later outgrow it,
+Control Tower remains a reasonable next step.
+
+**Isn't an AWS Organization with OUs over-engineered for a personal setup?**
+It is a little more structure than the minimum, but it buys two things that
+matter here. First, SCPs only exist in an Organization, and SCPs are the only
+control that stops an expensive API call before the resource is created. Second,
+separating a management account from workload accounts keeps a recovery path
+that SCPs cannot lock you out of. Two OUs (Prod and Test) is about as small as
+the structure gets while still letting you apply different rules to stable versus
+experimental workloads. You can run everything in a single workload account if
+you prefer even less.
+
+**Wages are much lower where I live. Is this safe for me to use?**
+Use judgment about what a bad month would cost you, not just the average. As a
+rough heuristic: if an unexpected $100 charge would be a genuine hardship, do not
+put a payment-backed AWS account at risk at all—prefer the AWS Free Tier, short-
+lived sandbox or training accounts, or a hard prepaid limit. If a $100 surprise
+would be an annoyance rather than a real setback, this project can meaningfully
+lower the odds and size of that surprise—but read
+[What this does not solve](#what-this-does-not-solve) first, because it reduces
+risk rather than removing it.
+
+**Can my monthly bill still exceed the budget threshold?**
+Yes. Budgets act on delayed billing data, some usage cannot be capped by policy
+(for example Lambda concurrency, log ingestion, DynamoDB on-demand spikes, or
+data transfer), and the management account itself is outside SCP enforcement.
+Quarantine limits damage; it is not a hard spending cap. See
+[What this does not solve](#what-this-does-not-solve).
+
+**Will this break my existing workloads?**
+It can, if attached without review. The policies are opinionated and deny many
+services outright. Inventory your current resources first, deploy detached, and
+attach incrementally starting in Test. Treat the defaults as a starting point to
+tailor, not a drop-in.
+
+**Does this replace good habits or a coding agent's own safeguards?**
+No. It is a backstop for when an instruction is missed or a change slips through
+review. Clear prompts, small diffs, and reading what your agent proposes still
+matter; the guardrails exist for the times they are not enough.
+
+**Do I have to deploy everything?**
+No. The components are independent. You can start with just `scp-guardrails`, add
+`budget-alarms`, and adopt `cost-quarantine` or `scheduled-switch` later—or never.
 
 ## Recommended rollout
 

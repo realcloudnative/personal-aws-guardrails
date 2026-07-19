@@ -6,10 +6,10 @@
 
 set -euo pipefail
 
-ORG_BASELINE_STACK="${ORG_BASELINE_STACK:-home-scp-org-baseline}"
-OU_POLICIES_STACK="${OU_POLICIES_STACK:-home-scp-ou-policies}"
+ORG_BASELINE_STACK="${ORG_BASELINE_STACK:-paws-scp-org-baseline}"
+OU_POLICIES_STACK="${OU_POLICIES_STACK:-paws-scp-ou-policies}"
 REGION="${REGION:-us-east-1}"
-POLICY_NAME_PREFIX="${POLICY_NAME_PREFIX:-home-guardrail}"
+POLICY_NAME_PREFIX="${POLICY_NAME_PREFIX:-paws}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORG_BASELINE_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-org-baseline.yaml"
 OU_POLICIES_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-ou-policies.yaml"
