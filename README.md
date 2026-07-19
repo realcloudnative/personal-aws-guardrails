@@ -162,7 +162,7 @@ flowchart TD
     Opinionated --> O1[Small EC2 only]
     Opinionated --> O2[No costly networking]
     Opinionated --> O3[No managed databases / clusters]
-    Opinionated --> O4[No recurring "best-practice" extras]
+    Opinionated --> O4[No recurring best-practice extras]
 
     classDef structure fill:#bcd0ee,stroke:#3b5b92,color:#1a2b45;
     classDef policy fill:#a8dcb8,stroke:#2f7d43,color:#12331d;
