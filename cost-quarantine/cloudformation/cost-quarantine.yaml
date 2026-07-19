@@ -93,59 +93,53 @@ Resources:
       Name: paws-cost-quarantine
       Type: SERVICE_CONTROL_POLICY
       Description: >
-        Emergency Test/Prod containment. Denies selected new/start/invoke actions,
-        but never stop/delete/terminate/remove/diagnostic actions or mitigation updates.
+        Emergency containment. Blanket deny with exceptions only for
+        investigation (read-only control plane) and remediation (stop/scale).
+        No data-plane access. No new resources. No invocations.
       Content:
         Version: "2012-10-17"
         Statement:
-          - Sid: DenyNewOrStartedCompute
+          # Blanket deny everything except investigation and remediation.
+          # When this SCP is attached, the account is frozen: no data-plane
+          # operations, no new resources, no invocations. Only minimal
+          # control-plane read, stop/scale-down, and SCP management remain.
+          - Sid: DenyAllExceptInvestigationAndRemediation
             Effect: Deny
             Resource: "*"
-            Action:
-              - ec2:RunInstances
-              - ec2:StartInstances
-              - ec2:CreateFleet
-              - ec2:RequestSpotInstances
-              - ec2:RequestSpotFleet
-              - ec2:RunScheduledInstances
-              - ec2:CreateNatGateway
-              - elasticloadbalancing:CreateLoadBalancer
-              - rds:CreateDBInstance
-              - rds:CreateDBCluster
-              - rds:RestoreDBInstanceFromDBSnapshot
-              - rds:RestoreDBClusterFromSnapshot
-              - rds:StartDBInstance
-              - rds:StartDBCluster
-              - ecs:RunTask
-              - ecs:StartTask
-              - ecs:CreateService
-              - eks:CreateCluster
-              - eks:CreateNodegroup
-              - states:StartExecution
-              - states:StartSyncExecution
-              - apprunner:CreateService
-              - apprunner:StartDeployment
-              - apprunner:ResumeService
-          - Sid: DenyMeteredAiAndJobs
-            Effect: Deny
-            Resource: "*"
-            Action:
-              - bedrock:InvokeModel
-              - bedrock:InvokeModelWithResponseStream
-              - bedrock:CreateModelInvocationJob
-              - bedrock-agentcore:InvokeAgentRuntime
-              - bedrock-agentcore:InvokeAgentRuntimeForUser
-              - bedrock-mantle:CreateInference
-              - bedrock-mantle:CallWithBearerToken
-              - aws-external-anthropic:*
-              - athena:StartQueryExecution
-              - transcribe:StartTranscriptionJob
-              - transcribe:StartMedicalTranscriptionJob
-              - translate:StartTextTranslationJob
-              - mediaconvert:CreateJob
-              - codebuild:StartBuild
-              - codebuild:StartBuildBatch
-              - imagebuilder:StartImagePipelineExecution
+            NotAction:
+              # --- Remediation: stop/scale/terminate (state machine needs these) ---
+              - ec2:StopInstances
+              - ec2:DescribeInstances
+              - ecs:ListClusters
+              - ecs:ListServices
+              - ecs:UpdateService
+              - autoscaling:DescribeAutoScalingGroups
+              - autoscaling:UpdateAutoScalingGroup
+              - lambda:PutFunctionConcurrency
+              - lambda:ListFunctions
+              # --- Investigation: read-only control plane ---
+              - cloudwatch:GetMetricData
+              - cloudwatch:ListMetrics
+              - cloudwatch:DescribeAlarms
+              - logs:DescribeLogGroups
+              - logs:FilterLogEvents
+              - ce:GetCostAndUsage
+              - ce:GetCostForecast
+              - sts:GetCallerIdentity
+              - iam:GetRole
+              - iam:ListRoles
+              - organizations:DescribePolicy
+              - organizations:ListPoliciesForTarget
+              # --- CloudFormation read (understand what exists) ---
+              - cloudformation:DescribeStacks
+              - cloudformation:ListStacks
+              - cloudformation:ListStackResources
+              # --- Resource inventory (what's running?) ---
+              - tag:GetResources
+              - resource-groups:ListGroupResources
+              - ec2:DescribeRegions
+              # --- Support: file cases during incident ---
+              - support:*
 
   BudgetActionRole:
     Type: AWS::IAM::Role
