@@ -192,6 +192,7 @@ require changing both the root allowlist and the OU policy.
 | Component | Responsibility | Deployment scope |
 |---|---|---|
 | [`scp-guardrails`](./scp-guardrails) | Prevent unsupported services and expensive configurations | Management account; policies target root/OUs |
+| [`org-policies`](./org-policies) | Declarative EC2/S3 enforcement, AI opt-out, data perimeter (RCP) | Management account; policies target root |
 | [`cost-quarantine`](./cost-quarantine) | Attach containment SCP and remediate ECS, ASG, and EC2 across regions | Management + workload accounts via StackSets |
 | [`budget-alarms`](./budget-alarms) | Organization-wide budget safety net | Management account |
 | [`idc-permission-sets`](./idc-permission-sets) | Separate management and workload identities | IAM Identity Center |

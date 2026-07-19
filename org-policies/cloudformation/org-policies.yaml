@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  AWS Organizations non-SCP policies: declarative EC2, declarative S3,
+  AI services opt-out, and resource control policy (data perimeter).
+  Deployed from the management account.
+
+Parameters:
+  OrgRootId:
+    Type: String
+    AllowedPattern: "^r-[a-z0-9]+$"
+    Description: Organization root ID to attach policies to.
+  OrgId:
+    Type: String
+    AllowedPattern: "^o-[a-z0-9]+$"
+    Description: Organization ID (for the RCP org-identity condition).
+
+Resources:
+  # ─────────────────────────────────────────────────────────────────────────
+  # MUST: Declarative EC2 policy
+  # Enforced at the EC2 service level, survives new APIs without SCP updates.
+  # ─────────────────────────────────────────────────────────────────────────
+  DeclarativeEc2Policy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: paws-declarative-ec2
+      Description: >-
+        Enforce IMDSv2, block public AMI/snapshot sharing, disable serial
+        console across all member accounts.
+      Type: DECLARATIVE_POLICY_EC2
+      Content:
+        ec2_attributes:
+          exception_message:
+            "@@assign": >-
+              Blocked by organization EC2 security policy (paws-declarative-ec2).
+          instance_metadata_defaults:
+            http_tokens:
+              "@@assign": "required"
+            http_put_response_hop_limit:
+              "@@assign": "2"
+            http_endpoint:
+              "@@assign": "enabled"
+            instance_metadata_tags:
+              "@@assign": "enabled"
+          serial_console_access:
+            status:
+              "@@assign": "disabled"
+          image_block_public_access:
+            state:
+              "@@assign": "block_new_sharing"
+          snapshot_block_public_access:
+            state:
+              "@@assign": "block_all_sharing"
+      TargetIds:
+        - !Ref OrgRootId
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # MUST: AI Services Opt-Out
+  # Prevents AWS from using your content to improve AI/ML models.
+  # ─────────────────────────────────────────────────────────────────────────
+  AiOptOutPolicy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: paws-ai-opt-out
+      Description: >-
+        Opt out of all AI service content use for model training.
+        Locked: child policies cannot override.
+      Type: AISERVICES_OPT_OUT_POLICY
+      Content:
+        services:
+          "@@operators_allowed_for_child_policies":
+            - "@@none"
+          default:
+            "@@operators_allowed_for_child_policies":
+              - "@@none"
+            opt_out_policy:
+              "@@operators_allowed_for_child_policies":
+                - "@@none"
+              "@@assign": "optOut"
+      TargetIds:
+        - !Ref OrgRootId
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SHOULD: Declarative S3 policy
+  # Enforces Block Public Access at the service level for all accounts.
+  # ─────────────────────────────────────────────────────────────────────────
+  DeclarativeS3Policy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: paws-declarative-s3
+      Description: >-
+        Enforce S3 Block Public Access (all four settings) across all
+        member accounts. Prevents account-level override.
+      Type: S3_POLICY
+      Content:
+        s3_attributes:
+          public_access_block_configuration:
+            "@@assign": "all"
+      TargetIds:
+        - !Ref OrgRootId
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SHOULD: Resource Control Policy (data perimeter)
+  # Prevents external principals from accessing resources in your accounts.
+  # Complements SCPs: SCPs limit what YOUR principals do; RCPs limit what
+  # ANYONE (including external identities) can do TO your resources.
+  # ─────────────────────────────────────────────────────────────────────────
+  ResourceControlPolicy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: paws-data-perimeter
+      Description: >-
+        Restrict resource access to principals within this organization
+        and trusted AWS services. Establishes an identity perimeter.
+      Type: RESOURCE_CONTROL_POLICY
+      Content:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyExternalPrincipals
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - "s3:*"
+              - "kms:*"
+              - "sqs:*"
+              - "secretsmanager:*"
+              - "sts:AssumeRole"
+              - "sts:GetFederationToken"
+              - "sts:GetSessionToken"
+              - "sts:SetContext"
+            Resource: "*"
+            Condition:
+              StringNotEqualsIfExists:
+                aws:PrincipalOrgID: !Ref OrgId
+              BoolIfExists:
+                aws:PrincipalIsAWSService: "false"
+      TargetIds:
+        - !Ref OrgRootId
+
+Outputs:
+  DeclarativeEc2PolicyId:
+    Value: !Ref DeclarativeEc2Policy
+  AiOptOutPolicyId:
+    Value: !Ref AiOptOutPolicy
+  DeclarativeS3PolicyId:
+    Value: !Ref DeclarativeS3Policy
+  ResourceControlPolicyId:
+    Value: !Ref ResourceControlPolicy
