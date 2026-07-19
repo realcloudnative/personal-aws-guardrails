@@ -3,11 +3,11 @@
 **A cost-conscious home landing zone for the agentic age.**
 
 Your coding agent offers to “make this production-ready.” It adds a NAT Gateway,
-an Application Load Balancer, an RDS instance, several KMS customer-managed
-keys, and a monitoring dashboard. Each choice is defensible in an enterprise,
-where a few dollars of baseline spend may be immaterial. In a personal account,
-those same defaults can consume an entire monthly budget without adding value to
-the project.
+an Application Load Balancer, a Secrets Manager secret for every credential,
+several KMS customer-managed keys, and a monitoring dashboard. Each choice is
+defensible in an enterprise, where a few dollars of baseline spend may be
+immaterial. In a personal account, those same defaults can consume an entire
+monthly budget without adding value to the project.
 
 Personal AWS Guardrails (PAWS) adds layered controls to reduce the likelihood
 and impact of that outcome. AWS Organizations service control policies (SCPs)
@@ -363,33 +363,31 @@ That makes forks deliberate rather than cargo-culted.
 ## FAQ
 
 **Why not use AWS Control Tower?**
-Control Tower is built for organizations onboarding many accounts with governed
-provisioning, dashboards, and a managed baseline. It also carries its own moving
-parts and cost overhead. This project targets the opposite end: one person, a
-couple of accounts, and a bill paid personally. It is a small set of readable
-CloudFormation templates and scripts you can inspect, fork, and delete in an
-afternoon—no managed service to adopt or pay for. If you later outgrow it,
-Control Tower remains a reasonable next step.
+Control Tower suits a small startup, but it is already oversized for a home
+account. It layers on AWS Config to record and evaluate resource configurations—
+useful for company compliance, rarely needed at home—and that adds ongoing
+overhead. Config bills per configuration item recorded, so if you create and
+change many resources it can itself become a minor cost-overrun risk. This
+project stays lighter: a small set of readable templates you can inspect, fork,
+and delete in an afternoon. If you later outgrow it, Control Tower remains a
+reasonable next step.
 
 **Isn't an AWS Organization with OUs over-engineered for a personal setup?**
-It is a little more structure than the minimum, but it buys two things that
-matter here. First, SCPs only exist in an Organization, and SCPs are the only
-control that stops an expensive API call before the resource is created. Second,
-separating a management account from workload accounts keeps a recovery path
-that SCPs cannot lock you out of. Two OUs (Prod and Test) is about as small as
-the structure gets while still letting you apply different rules to stable versus
-experimental workloads. You can run everything in a single workload account if
-you prefer even less.
+An AWS Organization comes at no additional charge and is far lighter than Control
+Tower, so it adds structure without adding overhead. The OU level is not
+decoration—it is where SCPs attach, and SCPs are the whole point of this project.
+Whether you want two OUs with two accounts or a single OU with one account is up
+to you: this repository models two so you can separate Test from Prod, but a
+simple sandbox works fine with one.
 
 **Wages are much lower where I live. Is this safe for me to use?**
-Use judgment about what a bad month would cost you, not just the average. As a
-rough heuristic: if an unexpected $100 charge would be a genuine hardship, do not
-put a payment-backed AWS account at risk at all—prefer the AWS Free Tier, short-
-lived sandbox or training accounts, or a hard prepaid limit. If a $100 surprise
-would be an annoyance rather than a real setback, this project can meaningfully
-lower the odds and size of that surprise—but read
-[What this does not solve](#what-this-does-not-solve) first, because it reduces
-risk rather than removing it.
+Judge it by what a bad month could cost you. As a rough heuristic: if an
+unexpected $100 charge would be a real hardship, do not put a payment-backed AWS
+account at risk at all—prefer the AWS Free Tier, a short-lived sandbox or training
+account, or a hard prepaid limit. If $100 would merely annoy you, this project can
+lower the odds and size of a surprise, but read
+[What this does not solve](#what-this-does-not-solve) first: it reduces risk
+rather than removing it.
 
 **Can my monthly bill still exceed the budget threshold?**
 Yes. Budgets act on delayed billing data, some usage cannot be capped by policy
@@ -404,14 +402,14 @@ services outright. Inventory your current resources first, deploy detached, and
 attach incrementally starting in Test. Treat the defaults as a starting point to
 tailor, not a drop-in.
 
-**Does this replace good habits or a coding agent's own safeguards?**
-No. It is a backstop for when an instruction is missed or a change slips through
-review. Clear prompts, small diffs, and reading what your agent proposes still
-matter; the guardrails exist for the times they are not enough.
+**How does this relate to my own prompts and my agent's built-in safeguards?**
+It complements them. Clear prompts, small diffs, and reviewing what your agent
+proposes still matter; these guardrails are the backstop for the times an
+instruction is missed or a change slips through review.
 
-**Do I have to deploy everything?**
-No. The components are independent. You can start with just `scp-guardrails`, add
-`budget-alarms`, and adopt `cost-quarantine` or `scheduled-switch` later—or never.
+**Can I adopt only some of the components?**
+Yes. They are independent. Start with just `scp-guardrails`, add `budget-alarms`,
+and adopt `cost-quarantine` or `scheduled-switch` later—or never.
 
 ## Recommended rollout
 
