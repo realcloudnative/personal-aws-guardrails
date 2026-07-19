@@ -2,7 +2,7 @@
 
 **A cost-conscious home landing zone for the agentic age.**
 
-Your coding agent offers to “make this production-ready.” It adds a NAT Gateway,
+Your coding agent offers to "make this production-ready." It adds a NAT Gateway,
 an Application Load Balancer, a Secrets Manager secret for every credential,
 several KMS customer-managed keys, and a monitoring dashboard. Each choice is
 defensible in an enterprise, where a few dollars of baseline spend may be
@@ -17,7 +17,7 @@ already running.
 
 > **The core idea:** reduce not only the blast radius of stolen credentials, but
 > also the blast radius of a fully authorized, well-intentioned agent doing
-> something you did not ask for—or did not notice in time.
+> something you did not ask for, or did not notice in time.
 
 > [!WARNING]
 > This is risk reduction, not a watertight spending cap. Guardrails are better
@@ -64,7 +64,7 @@ This project is a good fit if you:
 
 It is **not** a production enterprise landing zone, a compliance framework, a
 replacement for AWS Control Tower, or a guarantee that AWS spend cannot occur.
-It is intentionally small, reviewable, and opinionated.
+It is small, reviewable, and opinionated.
 
 ## Tenets
 
@@ -162,7 +162,7 @@ flowchart TD
     Opinionated --> O1[Small EC2 only]
     Opinionated --> O2[No costly networking]
     Opinionated --> O3[No managed databases / clusters]
-    Opinionated --> O4[No recurring “best-practice” extras]
+    Opinionated --> O4[No recurring "best-practice" extras]
 
     classDef structure fill:#bcd0ee,stroke:#3b5b92,color:#1a2b45;
     classDef policy fill:#a8dcb8,stroke:#2f7d43,color:#12331d;
@@ -373,8 +373,8 @@ and delete in an afternoon. If you later outgrow it, Control Tower remains a
 reasonable next step.
 
 **Isn't an AWS Organization with OUs over-engineered for a personal setup?**
-An AWS Organization comes at no additional charge and is far lighter than Control
-Tower, so it adds structure without adding overhead. The OU level is not
+An AWS Organization comes at no additional charge and is far lighter than
+Control Tower, so it adds structure without adding overhead. The OU level is not
 decoration—it is where SCPs attach, and SCPs are the whole point of this project.
 Whether you want two OUs with two accounts or a single OU with one account is up
 to you: this repository models two so you can separate Test from Prod, but a
