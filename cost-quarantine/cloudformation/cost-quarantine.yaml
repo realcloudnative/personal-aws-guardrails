@@ -132,9 +132,6 @@ Resources:
             Action:
               - bedrock:InvokeModel
               - bedrock:InvokeModelWithResponseStream
-              - bedrock:Converse
-              - bedrock:ConverseStream
-              - bedrock:StartAsyncInvoke
               - bedrock:CreateModelInvocationJob
               - bedrock-agentcore:InvokeAgentRuntime
               - bedrock-agentcore:InvokeAgentRuntimeForUser
