@@ -115,8 +115,6 @@ Resources:
               - ecs:UpdateService
               - autoscaling:DescribeAutoScalingGroups
               - autoscaling:UpdateAutoScalingGroup
-              - lambda:PutFunctionConcurrency
-              - lambda:ListFunctions
               # --- Investigation: read-only control plane ---
               - cloudwatch:GetMetricData
               - cloudwatch:ListMetrics
