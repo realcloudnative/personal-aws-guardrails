@@ -70,34 +70,11 @@ Resources:
               - ec2:CreateVpnConnection
               - ec2:CreateClientVpnEndpoint
               - ec2:AllocateAddress
-              - elasticloadbalancing:CreateLoadBalancer
-              - elasticloadbalancing:CreateTargetGroup
-              - vpc-lattice:CreateService
-              - vpc-lattice:CreateServiceNetwork
-              - network-firewall:CreateFirewall
-              - globalaccelerator:CreateAccelerator
             Resource: "*"
-          - Sid: DenyInterfaceVpcEndpoints
-            Effect: Deny
-            Action: ec2:CreateVpcEndpoint
-            Resource: "*"
-            Condition:
-              StringNotEquals:
-                ec2:VpcEndpointType: Gateway
-          # --- Expensive compute ---
+          # --- Expensive compute within allowed services ---
           - Sid: DenyExpensiveCompute
             Effect: Deny
             Action:
-              - eks:*
-              - dax:*
-              - elasticmapreduce:RunJobFlow
-              - elasticmapreduce:CreateCluster
-              - batch:CreateComputeEnvironment
-              - kafka:CreateCluster
-              - kafka:CreateClusterV2
-              - es:CreateDomain
-              - es:CreateElasticsearchDomain
-              - aoss:CreateCollection
               - kms:CreateKey
               - bedrock:CreateProvisionedModelThroughput
               - bedrock:CreateModelCustomizationJob
@@ -130,34 +107,13 @@ Resources:
                 ec2:VolumeType:
                   - io1
                   - io2
-          # --- Expensive storage services and all databases ---
-          - Sid: DenyExpensiveStorageAndDatabases
+          # --- Expensive features within allowed services ---
+          - Sid: DenyExpensiveFeatures
             Effect: Deny
             Action:
-              - fsx:CreateFileSystem
-              - storagegateway:*
-              - rds:CreateDBInstance
-              - rds:CreateDBCluster
-              - rds:RestoreDBInstanceFromDBSnapshot
-              - rds:RestoreDBClusterFromSnapshot
-              - elasticache:CreateCacheCluster
-              - elasticache:CreateReplicationGroup
-              - redshift:CreateCluster
-              - neptune-db:*
-              - neptune:CreateDBInstance
-              - neptune:CreateDBCluster
-              - memorydb:CreateCluster
-              - s3:PutBucketAccelerateConfiguration
+              - s3:PutAccelerateConfiguration
               - cloudtrail:CreateTrail
             Resource: "*"
-          # --- SSM Advanced tier parameters ---
-          - Sid: DenySsmAdvancedTier
-            Effect: Deny
-            Action: ssm:PutParameter
-            Resource: "*"
-            Condition:
-              StringEquals:
-                ssm:parameterTier: Advanced
 
 Outputs:
   OpinionatedCostGuardPolicyId:

@@ -84,7 +84,6 @@ Resources:
             Effect: Deny
             Action:
               - s3:PutAccountPublicAccessBlock
-              - s3:DeleteAccountPublicAccessBlock
             Resource: "*"
           - Sid: DenyLongLivedCredentials
             Effect: Deny
