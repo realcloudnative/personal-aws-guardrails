@@ -104,7 +104,7 @@ Resources:
               - iam:UpdateAssumeRolePolicy
               - iam:AttachRolePolicy
               - iam:DetachRolePolicy
-            Resource: arn:aws:iam::*:role/home-cost-quarantine-remediation
+            Resource: arn:aws:iam::*:role/paws-cost-quarantine-remediation
             Condition:
               ArnNotLike:
                 aws:PrincipalArn: arn:aws:iam::*:role/stacksets-exec-*
@@ -173,7 +173,7 @@ Resources:
     Properties:
       Name: !Sub ${PolicyNamePrefix}-service-allowlist
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny service actions outside the home-workload allowlist.
+      Description: Deny service actions outside the paws-workload allowlist.
       TargetIds: !If
         - AttachToRoot
         - - !Ref OrgRootTargetId

@@ -3,13 +3,13 @@
 # Usage: ./deploy.sh <notification-email>
 # Environment:
 #   AWS_PROFILE    required LandingZoneAdmin SSO profile
-#   STACK_NAME     default: home-budget-alarms
+#   STACK_NAME     default: paws-budget-alarms
 #   REGION         default: us-east-1 (Budgets control-plane endpoint)
 #   OVERALL_LIMIT  default: 20 USD/month
 
 set -euo pipefail
 
-STACK_NAME="${STACK_NAME:-home-budget-alarms}"
+STACK_NAME="${STACK_NAME:-paws-budget-alarms}"
 REGION="${REGION:-us-east-1}"
 OVERALL_LIMIT="${OVERALL_LIMIT:-20}"
 TEMPLATE="$(cd "$(dirname "$0")" && pwd)/cloudformation/budget-alarms.yaml"

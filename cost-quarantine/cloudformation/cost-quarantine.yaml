@@ -22,7 +22,7 @@ Parameters:
 
   QuarantineRoleBoundaryArn:
     Type: String
-    AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/home-cost-quarantine-role-boundary$"
+    AllowedPattern: "^arn:aws:iam::[0-9]{12}:policy/paws-cost-quarantine-role-boundary$"
     Description: Boundary ARN output by the permanent Identity Center stack.
 
   EnableRemediation:
@@ -33,19 +33,19 @@ Parameters:
 
   TestRemediationRoleName:
     Type: String
-    Default: home-cost-quarantine-remediation
+    Default: paws-cost-quarantine-remediation
     AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
     Description: Cross-account Test role assumed by the regional state machines.
 
   TestBudgetName:
     Type: String
-    Default: home-cost-quarantine-test
+    Default: paws-cost-quarantine-test
     AllowedPattern: '^[^:\\]+$'
     MaxLength: 100
 
   ProdBudgetName:
     Type: String
-    Default: home-cost-quarantine-prod
+    Default: paws-cost-quarantine-prod
     AllowedPattern: '^[^:\\]+$'
     MaxLength: 100
 
@@ -90,7 +90,7 @@ Resources:
   QuarantineScp:
     Type: AWS::Organizations::Policy
     Properties:
-      Name: home-cost-quarantine
+      Name: paws-cost-quarantine
       Type: SERVICE_CONTROL_POLICY
       Description: >
         Emergency Test/Prod containment. Denies selected new/start/invoke actions,
@@ -153,7 +153,7 @@ Resources:
   BudgetActionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: home-cost-quarantine-budget-action
+      RoleName: paws-cost-quarantine-budget-action
       PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
       Description: Budget-only role for applying or manually reversing the containment SCP.
       AssumeRolePolicyDocument:
@@ -258,7 +258,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: EnableRemediationResources
     Properties:
-      RoleName: home-cost-quarantine-regional-states
+      RoleName: paws-cost-quarantine-regional-states
       PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
       Description: Global execution role for per-region remediation state machines.
       AssumeRolePolicyDocument:
@@ -272,7 +272,7 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
               ArnLike:
-                aws:SourceArn: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
+                aws:SourceArn: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:paws-cost-quarantine-regional
       Policies:
         - PolicyName: assume-workload-remediation-role
           PolicyDocument:
@@ -303,7 +303,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: EnableRemediationResources
     Properties:
-      RoleName: home-cost-quarantine-regional-trigger
+      RoleName: paws-cost-quarantine-regional-trigger
       PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
       Description: Allows EventBridge in any Region to start the regional remediation state machine.
       AssumeRolePolicyDocument:
@@ -323,13 +323,13 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: states:StartExecution
-                Resource: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:home-cost-quarantine-regional
+                Resource: !Sub arn:${AWS::Partition}:states:*:${AWS::AccountId}:stateMachine:paws-cost-quarantine-regional
 
   EventForwardingRole:
     Type: AWS::IAM::Role
     Condition: EnableRemediationResources
     Properties:
-      RoleName: home-cost-quarantine-event-forwarder
+      RoleName: paws-cost-quarantine-event-forwarder
       PermissionsBoundary: !Ref QuarantineRoleBoundaryArn
       Description: Allows EventBridge to forward budget-action events to regional default buses.
       AssumeRolePolicyDocument:
@@ -356,7 +356,7 @@ Resources:
     Type: AWS::Events::Rule
     Condition: EnableRemediationResources
     Properties:
-      Name: home-cost-quarantine-forwarder
+      Name: paws-cost-quarantine-forwarder
       Description: >
         Forwards ExecuteBudgetAction events for the Test quarantine budget to
         all remediation Regions. Regional state machines pick up the event

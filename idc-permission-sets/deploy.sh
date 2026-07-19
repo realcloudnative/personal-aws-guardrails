@@ -18,7 +18,7 @@ WORKLOAD_PRINCIPAL_ID="$5"
 PROD_ACCOUNT_ID="${6:-}"
 REGION="${REGION:-}"
 SSO_PROFILE="${SSO_PROFILE:-${AWS_PROFILE:-}}"
-STACK_NAME="${STACK_NAME:-home-idc-permission-sets}"
+STACK_NAME="${STACK_NAME:-paws-idc-permission-sets}"
 TEMPLATE="$(cd "$(dirname "$0")" && pwd)/cloudformation/idc-permission-sets.yaml"
 
 [[ -n "$REGION" ]] || fail "Set REGION to the Identity Center home Region"

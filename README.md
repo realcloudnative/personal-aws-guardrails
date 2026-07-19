@@ -75,7 +75,7 @@ It is small, reviewable, and opinionated.
 3. **Deny by default, allow by exception.** A service has to justify its presence
    in the workload accounts.
 4. **Separate universal boundaries from personal choices.** Org-root policies
-   contain broadly sensible home-account protections. One OU-level policy holds
+   contain broadly sensible paws-account protections. One OU-level policy holds
    the choices another operator may reasonably disagree with.
 5. **Constrain valid automation, not only attackers.** Administrator permissions
    do not imply permission to create every AWS architecture pattern.
@@ -148,7 +148,7 @@ flowchart TD
     Prod[Prod OU]
     Test[Test OU]
 
-    Root --> Universal[Universal home-account guardrails]
+    Root --> Universal[Universal paws-account guardrails]
     Universal --> U1[Security baseline]
     Universal --> U2[Coarse five-region ceiling]
     Universal --> U3[Service allowlist]
@@ -304,8 +304,8 @@ cd personal-aws-guardrails
 cfn-lint scp-guardrails/cloudformation/*.yaml
 bash -n scp-guardrails/deploy.sh
 
-aws sso login --profile home-mgmt-landing
-AWS_PROFILE=home-mgmt-landing ./scp-guardrails/deploy.sh
+aws sso login --profile paws-mgmt-landing
+AWS_PROFILE=paws-mgmt-landing ./scp-guardrails/deploy.sh
 ```
 
 That creates or updates the policies **without attaching them**. Review the
@@ -314,7 +314,7 @@ rendered policies and current Organization state before changing enforcement.
 ### Attach deliberately
 
 ```bash
-AWS_PROFILE=home-mgmt-landing ./scp-guardrails/deploy.sh \
+AWS_PROFILE=paws-mgmt-landing ./scp-guardrails/deploy.sh \
   --org-root-id r-XXXX \
   --opinionated-targets ou-XXXX-XXXXXXXX
 ```
@@ -443,7 +443,7 @@ Issues and discussions are welcome, especially for:
 - controls with a better low-cost alternative;
 - false positives that block ordinary home workloads;
 - documentation, tests, and portability improvements;
-- alternative opinionated policies for different home-lab styles.
+- alternative opinionated policies for different paws-lab styles.
 
 When proposing a policy change, explain the threat or cost model, who may
 disagree, and how the behavior can be tested safely.

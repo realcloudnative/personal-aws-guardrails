@@ -15,7 +15,7 @@ Parameters:
 
   TestRemediationRoleName:
     Type: String
-    Default: home-cost-quarantine-remediation
+    Default: paws-cost-quarantine-remediation
     AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
     Description: Must match the management stack parameter of the same name.
 
@@ -35,7 +35,7 @@ Resources:
             Action: sts:AssumeRole
             Condition:
               ArnEquals:
-                aws:PrincipalArn: !Sub arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states
+                aws:PrincipalArn: !Sub arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states
       Policies:
         - PolicyName: enumerate-and-reversibly-remediate
           PolicyDocument:

@@ -88,7 +88,7 @@ Resources:
   CostQuarantineRoleBoundary:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      ManagedPolicyName: home-cost-quarantine-role-boundary
+      ManagedPolicyName: paws-cost-quarantine-role-boundary
       Description: Maximum permissions for the fixed management-account cost-quarantine roles.
       PolicyDocument:
         Version: "2012-10-17"
@@ -183,8 +183,8 @@ Resources:
                 "sns:TagResource", "sns:UntagResource"
               ],
               "Resource": [
-                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:home-cost-quarantine-*",
-                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:home-cost-quarantine-*:*"
+                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:paws-cost-quarantine-*",
+                "arn:${AWS::Partition}:sns:*:${ManagementAccountId}:paws-cost-quarantine-*:*"
               ]
             },
             {
@@ -196,8 +196,8 @@ Resources:
                 "states:TagResource", "states:UntagResource"
               ],
               "Resource": [
-                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:stateMachine:home-cost-quarantine-*",
-                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:execution:home-cost-quarantine-*:*"
+                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:stateMachine:paws-cost-quarantine-*",
+                "arn:${AWS::Partition}:states:*:${ManagementAccountId}:execution:paws-cost-quarantine-*:*"
               ]
             },
             {
@@ -209,8 +209,8 @@ Resources:
                 "logs:TagLogGroup", "logs:UntagLogGroup"
               ],
               "Resource": [
-                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*",
-                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/home-cost-quarantine-*:*"
+                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/paws-cost-quarantine-*",
+                "arn:${AWS::Partition}:logs:*:${ManagementAccountId}:log-group:/aws/vendedlogs/states/paws-cost-quarantine-*:*"
               ]
             },
             {
@@ -223,7 +223,7 @@ Resources:
                 "events:EnableRule", "events:DisableRule",
                 "events:TagResource", "events:UntagResource"
               ],
-              "Resource": "arn:${AWS::Partition}:events:*:${ManagementAccountId}:rule/home-cost-quarantine-*"
+              "Resource": "arn:${AWS::Partition}:events:*:${ManagementAccountId}:rule/paws-cost-quarantine-*"
             },
             {
               "Sid": "ApplyAccountBaselineSettings",
@@ -248,10 +248,10 @@ Resources:
               "Effect": "Allow",
               "Action": "iam:CreateRole",
               "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {
@@ -276,10 +276,10 @@ Resources:
                 "iam:UntagRole"
               ],
               "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-trigger"
               ]
             },
             {
@@ -287,10 +287,10 @@ Resources:
               "Effect": "Allow",
               "Action": "iam:PutRolePermissionsBoundary",
               "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {
@@ -303,10 +303,10 @@ Resources:
               "Effect": "Allow",
               "Action": "iam:DeleteRolePermissionsBoundary",
               "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-trigger"
               ]
             },
             {
@@ -314,10 +314,10 @@ Resources:
               "Effect": "Allow",
               "Action": "iam:PassRole",
               "Resource": [
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-budget-action",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-event-forwarder",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-states",
-                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/home-cost-quarantine-regional-trigger"
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-budget-action",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-event-forwarder",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-states",
+                "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/paws-cost-quarantine-regional-trigger"
               ],
               "Condition": {
                 "StringEquals": {

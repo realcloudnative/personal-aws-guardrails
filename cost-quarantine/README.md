@@ -9,10 +9,10 @@ not a real-time spend cap.
 
 ```text
 Test linked-account FORECASTED spend >= $50
-  └─ automatic Budget action attaches home-cost-quarantine SCP to Test
+  └─ automatic Budget action attaches paws-cost-quarantine SCP to Test
 
 Prod linked-account ACTUAL spend >= $50
-  └─ automatic Budget action attaches home-cost-quarantine SCP to Prod
+  └─ automatic Budget action attaches paws-cost-quarantine SCP to Prod
 ```
 
 The same generic SCP can be attached independently to either account. Each
@@ -22,7 +22,7 @@ release.
 
 With the default `EnableRemediation=false`, CloudFormation creates only:
 
-- `home-cost-quarantine` SCP, initially unattached;
+- `paws-cost-quarantine` SCP, initially unattached;
 - one permissions-bounded Budgets execution role;
 - Test $50 forecasted budget and automatic SCP action;
 - Prod $50 actual budget and automatic SCP action.
@@ -77,7 +77,7 @@ Budget threshold exceeded
 │ Test + Prod accounts (test-remediation-role.yaml via service-managed    │
 │                        StackSet, auto-deployment enabled)               │
 │                                                                         │
-│  home-cost-quarantine-remediation role                                  │
+│  paws-cost-quarantine-remediation role                                  │
 │  ├─ Trusts management execution role                                    │
 │  ├─ ec2:StopInstances, ec2:DescribeInstances                           │
 │  ├─ autoscaling:DescribeAutoScalingGroups, UpdateAutoScalingGroup       │
@@ -91,9 +91,9 @@ Budget threshold exceeded
 
 | Component | Stack / StackSet | Location | Purpose |
 |---|---|---|---|
-| `cost-quarantine.yaml` | `home-cost-quarantine` stack | Management, us-east-1 | SCP, budgets, actions, conditional EventBridge forwarder + roles |
-| `regional-remediation.yaml` | `home-cost-quarantine-regional` self-managed StackSet | Management, all 5 Regions | Per-region state machine, EventBridge rule, log group |
-| `test-remediation-role.yaml` | `home-cost-quarantine-test-role` service-managed StackSet | Test + Prod OUs | Cross-account remediation role with auto-deployment |
+| `cost-quarantine.yaml` | `paws-cost-quarantine` stack | Management, us-east-1 | SCP, budgets, actions, conditional EventBridge forwarder + roles |
+| `regional-remediation.yaml` | `paws-cost-quarantine-regional` self-managed StackSet | Management, all 5 Regions | Per-region state machine, EventBridge rule, log group |
+| `test-remediation-role.yaml` | `paws-cost-quarantine-test-role` service-managed StackSet | Test + Prod OUs | Cross-account remediation role with auto-deployment |
 
 ### State machine design
 
@@ -121,7 +121,7 @@ workload accounts under this SCP design, so no RDS remediation is needed.
 
 The `ProtectQuarantineRemediationRole` statement in the baseline-security SCP
 denies workload admins from modifying or deleting the
-`home-cost-quarantine-remediation` role. The service-managed StackSet execution
+`paws-cost-quarantine-remediation` role. The service-managed StackSet execution
 role (`stacksets-exec-*`) is exempted so CloudFormation can manage the role's
 lifecycle. See [`scp-guardrails/README.md`](../scp-guardrails/README.md#quarantine-remediation-role-protection)
 for details.
@@ -162,7 +162,7 @@ Prerequisites:
 - notification email supplied locally and never committed.
 
 ```bash
-export AWS_PROFILE=home-mgmt-landing
+export AWS_PROFILE=paws-mgmt-landing
 ./deploy.sh <test-account-id> <prod-account-id> <notification-email>
 ```
 
@@ -181,7 +181,7 @@ ENABLE_REMEDIATION=false
 Additional prerequisites:
 
 - StackSet bootstrap roles deployed (`AWSCloudFormationStackSetAdministrationRole`
-  + `AWSCloudFormationStackSetExecutionRole` via `home-stackset-bootstrap` stack)
+  + `AWSCloudFormationStackSetExecutionRole` via `paws-stackset-bootstrap` stack)
 - Organizations trusted access for CloudFormation StackSets enabled
 - `LandingZoneAdmin` permissions include: `events:PutRule`, `events:PutTargets`,
   `iam:CreateRole` for quarantine roles, `iam:PassRole` to events/states/budgets
@@ -207,7 +207,7 @@ Monitor StackSet progress:
 
 ```bash
 aws cloudformation list-stack-set-operations \
-  --stack-set-name home-cost-quarantine-regional \
+  --stack-set-name paws-cost-quarantine-regional \
   --region us-east-1
 ```
 
@@ -217,7 +217,7 @@ aws cloudformation list-stack-set-operations \
 trigger:
 
 ```bash
-export AWS_PROFILE=home-mgmt-landing
+export AWS_PROFILE=paws-mgmt-landing
 ./test-remediation.sh <test-account-id> <test-sso-profile>
 ```
 
@@ -238,7 +238,7 @@ Investigate the cost event first. To release one account, use that account's
 budget name and action ID from the management stack outputs:
 
 ```bash
-export AWS_PROFILE=home-mgmt-landing
+export AWS_PROFILE=paws-mgmt-landing
 MANAGEMENT_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
 aws budgets execute-budget-action \
@@ -262,7 +262,7 @@ regional state machine directly with `targetAccountId` as input, verifies the
 instance is stopped, and terminates it.
 
 ```bash
-AWS_PROFILE=home-mgmt-landing TEST_PROFILE=home-test-admin \
+AWS_PROFILE=paws-mgmt-landing TEST_PROFILE=paws-test-admin \
   ./test-remediation.sh
 ```
 
@@ -270,7 +270,7 @@ The default test Region is `eu-central-1`. Override with `REGION=us-east-1`.
 
 Requirements:
 - Both management and workload SSO sessions active (separate users/browsers)
-- `LandingZoneAdmin` needs `states:StartExecution` on `home-cost-quarantine-*`
+- `LandingZoneAdmin` needs `states:StartExecution` on `paws-cost-quarantine-*`
 - Test launches must comply with active SCPs: IMDSv2 required, EBS encryption
   required, instance size ≤ small
 
@@ -278,11 +278,11 @@ To test the full EventBridge trigger chain (attaches the SCP and fires all 5
 regional state machines), manually execute the budget action:
 
 ```bash
-AWS_PROFILE=home-mgmt-landing
+AWS_PROFILE=paws-mgmt-landing
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 aws budgets execute-budget-action \
   --account-id "$ACCOUNT_ID" \
-  --budget-name home-cost-quarantine-test \
+  --budget-name paws-cost-quarantine-test \
   --action-id <test-action-id-from-stack-outputs> \
   --execution-type EXECUTE_BUDGET_ACTION \
   --region us-east-1

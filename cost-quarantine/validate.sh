@@ -73,7 +73,7 @@ deploy = Path(sys.argv[3]).read_text()
 
 # Management template markers
 for marker in (
-    'Name: home-cost-quarantine',
+    'Name: paws-cost-quarantine',
     'EnableRemediationResources: !Equals [!Ref EnableRemediation, "true"]',
     'ApprovalModel: AUTOMATIC',
     'PermissionsBoundary: !Ref QuarantineRoleBoundaryArn',

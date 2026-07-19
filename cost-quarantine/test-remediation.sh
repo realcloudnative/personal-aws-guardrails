@@ -73,7 +73,7 @@ printf '  ✓ Instance is running\n'
 
 # Start the regional state machine with targetAccountId
 printf 'Starting regional state machine...\n'
-sm_arn="arn:aws:states:${REGION}:${mgmt_account}:stateMachine:home-cost-quarantine-regional"
+sm_arn="arn:aws:states:${REGION}:${mgmt_account}:stateMachine:paws-cost-quarantine-regional"
 execution_arn=$(aws --profile "$MANAGEMENT_PROFILE" --region "$REGION" stepfunctions start-execution \
   --state-machine-arn "$sm_arn" \
   --name "test-$(date +%s)" \

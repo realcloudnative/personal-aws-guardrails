@@ -74,15 +74,15 @@ First ensure no unrelated credentials can override the selected SSO profile:
 
 ```bash
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
-aws configure sso --profile home-mgmt-bootstrap
+aws configure sso --profile paws-mgmt-bootstrap
 ```
 
 Use the access-portal URL and IdC home Region from the console. Select the
 management account and `TemporaryBootstrapAdministrator`, then sign in:
 
 ```bash
-aws sso login --profile home-mgmt-bootstrap
-AWS_PROFILE=home-mgmt-bootstrap aws sts get-caller-identity
+aws sso login --profile paws-mgmt-bootstrap
+AWS_PROFILE=paws-mgmt-bootstrap aws sts get-caller-identity
 ```
 
 Verify both facts before continuing:
@@ -101,8 +101,8 @@ do not provide tokens or credentials.
 Perform discovery before the first CloudFormation deployment:
 
 ```bash
-export AWS_PROFILE=home-mgmt-bootstrap
-export REGION=<identity-center-home-region>
+export AWS_PROFILE=paws-mgmt-bootstrap
+export REGION=<identity-center-paws-region>
 
 aws organizations describe-organization
 aws organizations list-accounts
@@ -132,8 +132,8 @@ template before deploying.
 ## Step 4 — Deploy permanent access through temporary SSO
 
 ```bash
-export REGION=<identity-center-home-region>
-export SSO_PROFILE=home-mgmt-bootstrap
+export REGION=<identity-center-paws-region>
+export SSO_PROFILE=paws-mgmt-bootstrap
 
 ./deploy.sh \
   <identity-center-instance-arn> \
@@ -166,23 +166,23 @@ they share an access-portal URL.
 Use this local naming model:
 
 ```text
-SSO session: home-mgmt       (management IdC user)
-  home-mgmt-bootstrap  → management / TemporaryBootstrapAdministrator
-  home-mgmt-readonly   → management / ManagementReadOnly
-  home-mgmt-landing    → management / LandingZoneAdmin
-  home-mgmt-identity   → management / IdentityCenterAdmin
+SSO session: paws-mgmt       (management IdC user)
+  paws-mgmt-bootstrap  → management / TemporaryBootstrapAdministrator
+  paws-mgmt-readonly   → management / ManagementReadOnly
+  paws-mgmt-landing    → management / LandingZoneAdmin
+  paws-mgmt-identity   → management / IdentityCenterAdmin
 
-SSO session: home-workload   (workload IdC user)
-  home-billing-readonly → management / BillingReadOnly
-  home-test-admin       → Test / WorkloadAdmin
-  home-prod-admin       → Prod / WorkloadAdmin  # only if assigned
+SSO session: paws-workload   (workload IdC user)
+  paws-billing-readonly → management / BillingReadOnly
+  paws-test-admin       → Test / WorkloadAdmin
+  paws-prod-admin       → Prod / WorkloadAdmin  # only if assigned
 ```
 
 Do **not** run the interactive wizard once per profile. The wizard is useful for
 creating the first session, but the remaining entries are deterministic local
 configuration.
 
-1. If `home-mgmt-bootstrap` already works, its `[sso-session home-mgmt]` block
+1. If `paws-mgmt-bootstrap` already works, its `[sso-session paws-mgmt]` block
    is the management session. Keep it.
 2. Back up the local file before editing:
 
@@ -192,8 +192,8 @@ configuration.
    ```
 
 3. Add the permanent management profile blocks below, all referencing
-   `sso_session = home-mgmt`.
-4. Add one distinct `[sso-session home-workload]` block using the same portal URL
+   `sso_session = paws-mgmt`.
+4. Add one distinct `[sso-session paws-workload]` block using the same portal URL
    and IdC Region, then add Billing/Test/Prod profiles that reference it. Never
    put tokens or credentials in this file.
 5. Run `aws configure list-profiles` and inspect the file before logging in.
@@ -209,60 +209,60 @@ in your local file; never copy real account IDs or portal URLs into this
 repository:
 
 ```ini
-[sso-session home-mgmt]
+[sso-session paws-mgmt]
 sso_start_url = <access-portal-url>
-sso_region = <identity-center-home-region>
+sso_region = <identity-center-paws-region>
 sso_registration_scopes = sso:account:access
 
-[profile home-mgmt-bootstrap]
-sso_session = home-mgmt
+[profile paws-mgmt-bootstrap]
+sso_session = paws-mgmt
 sso_account_id = <management-account-id>
 sso_role_name = TemporaryBootstrapAdministrator
 region = us-east-1
 output = json
 
-[profile home-mgmt-readonly]
-sso_session = home-mgmt
+[profile paws-mgmt-readonly]
+sso_session = paws-mgmt
 sso_account_id = <management-account-id>
 sso_role_name = ManagementReadOnly
 region = us-east-1
 output = json
 
-[profile home-mgmt-landing]
-sso_session = home-mgmt
+[profile paws-mgmt-landing]
+sso_session = paws-mgmt
 sso_account_id = <management-account-id>
 sso_role_name = LandingZoneAdmin
 region = us-east-1
 output = json
 
-[profile home-mgmt-identity]
-sso_session = home-mgmt
+[profile paws-mgmt-identity]
+sso_session = paws-mgmt
 sso_account_id = <management-account-id>
 sso_role_name = IdentityCenterAdmin
 region = us-east-1
 output = json
 
-[sso-session home-workload]
+[sso-session paws-workload]
 sso_start_url = <access-portal-url>
-sso_region = <identity-center-home-region>
+sso_region = <identity-center-paws-region>
 sso_registration_scopes = sso:account:access
 
-[profile home-billing-readonly]
-sso_session = home-workload
+[profile paws-billing-readonly]
+sso_session = paws-workload
 sso_account_id = <management-account-id>
 sso_role_name = BillingReadOnly
 region = us-east-1
 output = json
 
-[profile home-test-admin]
-sso_session = home-workload
+[profile paws-test-admin]
+sso_session = paws-workload
 sso_account_id = <test-account-id>
 sso_role_name = WorkloadAdmin
 region = eu-central-1
 output = json
 
-[profile home-prod-admin]
-sso_session = home-workload
+[profile paws-prod-admin]
+sso_session = paws-workload
 sso_account_id = <prod-account-id>
 sso_role_name = WorkloadAdmin
 region = eu-central-1
@@ -281,24 +281,24 @@ into the other user's assignments; authenticate each session as the intended
 user.
 
 One login per SSO session is sufficient. Profiles added to an already logged-in
-`home-mgmt` session may work immediately; otherwise authenticate once:
+`paws-mgmt` session may work immediately; otherwise authenticate once:
 
 ```bash
-# Authenticates all profiles that use home-mgmt.
-aws sso login --profile home-mgmt-readonly
+# Authenticates all profiles that use paws-mgmt.
+aws sso login --profile paws-mgmt-readonly
 
 # Authenticate once as the distinct workload IdC user. Device-code mode makes
 # it easy to open the URL in a private browser and avoid reusing the management
 # user's web session. This covers Billing, Test, and Prod.
 aws sso login \
-  --profile home-billing-readonly \
+  --profile paws-billing-readonly \
   --use-device-code \
   --no-browser
 ```
 
 If the installed AWS CLI does not support those device-code flags, sign out of
 the access portal in the browser (or use a separate browser profile) and run the
-ordinary `aws sso login --profile home-billing-readonly`. Always verify which
+ordinary `aws sso login --profile paws-billing-readonly`. Always verify which
 IdC user the browser shows before approving the login.
 
 Do not use the unqualified `default` profile for this repository. Select a
@@ -306,12 +306,12 @@ profile explicitly with `AWS_PROFILE` or `--profile`, then verify every
 account/role pair independently:
 
 ```bash
-AWS_PROFILE=home-mgmt-readonly aws sts get-caller-identity
-AWS_PROFILE=home-mgmt-landing aws sts get-caller-identity
-AWS_PROFILE=home-mgmt-identity aws sts get-caller-identity
-AWS_PROFILE=home-billing-readonly aws sts get-caller-identity
-AWS_PROFILE=home-test-admin aws sts get-caller-identity
-AWS_PROFILE=home-prod-admin aws sts get-caller-identity  # only if assigned
+AWS_PROFILE=paws-mgmt-readonly aws sts get-caller-identity
+AWS_PROFILE=paws-mgmt-landing aws sts get-caller-identity
+AWS_PROFILE=paws-mgmt-identity aws sts get-caller-identity
+AWS_PROFILE=paws-billing-readonly aws sts get-caller-identity
+AWS_PROFILE=paws-test-admin aws sts get-caller-identity
+AWS_PROFILE=paws-prod-admin aws sts get-caller-identity  # only if assigned
 ```
 
 For each result, require the intended account ID and an ARN containing the
@@ -340,13 +340,13 @@ only permitted management assignment for that user is `BillingReadOnly`.
 ## Step 6 — Retire the temporary assignment
 
 ```bash
-export REGION=<identity-center-home-region>
-export MANAGEMENT_READ_ONLY_PROFILE=home-mgmt-readonly
-export LANDING_ZONE_PROFILE=home-mgmt-landing
-export IDENTITY_CENTER_PROFILE=home-mgmt-identity
-export WORKLOAD_BILLING_PROFILE=home-billing-readonly
-export WORKLOAD_TEST_PROFILE=home-test-admin
-export WORKLOAD_PROD_PROFILE=home-prod-admin  # only if Prod was assigned
+export REGION=<identity-center-paws-region>
+export MANAGEMENT_READ_ONLY_PROFILE=paws-mgmt-readonly
+export LANDING_ZONE_PROFILE=paws-mgmt-landing
+export IDENTITY_CENTER_PROFILE=paws-mgmt-identity
+export WORKLOAD_BILLING_PROFILE=paws-billing-readonly
+export WORKLOAD_TEST_PROFILE=paws-test-admin
+export WORKLOAD_PROD_PROFILE=paws-prod-admin  # only if Prod was assigned
 
 ./retire-bootstrap.sh \
   <identity-center-instance-arn> \

@@ -17,7 +17,7 @@ CONTROL_REGION="${CONTROL_REGION:-}"
 ACCOUNT_TYPE="${ACCOUNT_TYPE:-}"
 GUARDDUTY_REGION="${GUARDDUTY_REGION:-}"
 INSPECTION_REGIONS="${INSPECTION_REGIONS:-us-east-1 us-west-2 eu-central-1 eu-north-1 ap-southeast-1}"
-STACK_NAME="${STACK_NAME:-home-guardduty}"
+STACK_NAME="${STACK_NAME:-paws-guardduty}"
 TEMPLATE="$(cd "$(dirname "$0")" && pwd)/cloudformation/guardduty-detector.yaml"
 ERROR_FILE="$(mktemp)"
 trap 'rm -f "$ERROR_FILE"' EXIT

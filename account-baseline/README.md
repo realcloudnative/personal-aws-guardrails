@@ -37,14 +37,14 @@ Use an explicit, externally supplied 12-digit account ID. Replace shell placehol
 # five landing-zone Regions; S3 BPA is handled once for the account.
 EXPECTED_ACCOUNT_ID="$TARGET_ACCOUNT_ID" \
 CONTROL_REGION="us-east-1" \
-AWS_PROFILE="home-test-admin" \
+AWS_PROFILE="paws-test-admin" \
 ./apply-account-baseline.sh
 
 # Limit only the per-Region EBS and IMDS work.
 EXPECTED_ACCOUNT_ID="$TARGET_ACCOUNT_ID" \
 CONTROL_REGION="eu-central-1" \
 REGIONS="eu-central-1" \
-AWS_PROFILE="home-test-admin" \
+AWS_PROFILE="paws-test-admin" \
 ./apply-account-baseline.sh
 ```
 
@@ -55,14 +55,14 @@ GuardDuty remains optional: invoking its separate wrapper is the opt-in. The wra
 EXPECTED_ACCOUNT_ID="$MANAGEMENT_ACCOUNT_ID" \
 CONTROL_REGION="us-east-1" \
 ACCOUNT_TYPE="management" \
-AWS_PROFILE="home-mgmt-landing" \
+AWS_PROFILE="paws-mgmt-landing" \
 ./deploy-guardduty.sh
 
 # Test or Prod: defaults to eu-central-1 and requires WorkloadAdmin.
 EXPECTED_ACCOUNT_ID="$WORKLOAD_ACCOUNT_ID" \
 CONTROL_REGION="eu-central-1" \
 ACCOUNT_TYPE="workload" \
-AWS_PROFILE="home-test-admin" \
+AWS_PROFILE="paws-test-admin" \
 ./deploy-guardduty.sh
 ```
 
@@ -112,7 +112,7 @@ export OLD_GD_REGION=<existing-detector-region>
 
 aws guardduty list-detectors --region "$OLD_GD_REGION"
 aws cloudformation describe-stacks \
-  --stack-name home-guardduty \
+  --stack-name paws-guardduty \
   --region "$OLD_GD_REGION"
 ```
 
@@ -152,7 +152,7 @@ destructive decision.
 - Enabling EBS encryption by default affects subsequently created EBS volumes and snapshot copies; it does not encrypt existing volumes.
 - EC2 account-level metadata defaults apply when launch settings inherit them; they do not rewrite existing instance metadata options. AWS can return `None`/unset for an account with no explicit default; the wrapper treats that as valid and sets only `HttpTokens=required`. A disabled or unset `HttpEndpoint` remains unchanged and is verified after mutation.
 - A GuardDuty stack cannot be created while an unmanaged detector already exists in its selected account/Region.
-- Single-Region GuardDuty does not monitor regional resource activity in other Regions. The reduced coverage is an explicit home-setup trade-off.
+- Single-Region GuardDuty does not monitor regional resource activity in other Regions. The reduced coverage is an explicit paws-setup trade-off.
 
 ## Local validation
 

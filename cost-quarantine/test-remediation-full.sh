@@ -155,7 +155,7 @@ printf '  ✓ Standalone EC2 running\n'
 
 # --- Run the state machine ---
 printf '\nStarting regional state machine...\n'
-sm_arn="arn:aws:states:${REGION}:${mgmt_account}:stateMachine:home-cost-quarantine-regional"
+sm_arn="arn:aws:states:${REGION}:${mgmt_account}:stateMachine:paws-cost-quarantine-regional"
 execution_arn=$(aws --profile "$MANAGEMENT_PROFILE" --region "$REGION" stepfunctions start-execution \
   --state-machine-arn "$sm_arn" \
   --name "full-test-$(date +%s)" \

@@ -22,7 +22,7 @@ Resources:
     Type: AWS::Budgets::Budget
     Properties:
       Budget:
-        BudgetName: home-overall-monthly
+        BudgetName: paws-overall-monthly
         BudgetType: COST
         TimeUnit: MONTHLY
         BudgetLimit:

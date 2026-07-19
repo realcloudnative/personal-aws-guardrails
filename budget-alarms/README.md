@@ -8,7 +8,7 @@ consolidated spend.
 
 | Name | Scope | Default limit | Notifications |
 |---|---|---:|---|
-| `home-overall-monthly` | Entire organization | $20/month | Actual 25%, 50%, 75%; forecasted 50% |
+| `paws-overall-monthly` | Entire organization | $20/month | Actual 25%, 50%, 75%; forecasted 50% |
 
 There are deliberately no $5 Test or $2 Prod micro-budgets. The separate
 [`cost-quarantine`](../cost-quarantine) component owns the high-threshold
@@ -23,7 +23,7 @@ Use the management user's `LandingZoneAdmin` profile. The notification address
 is a local deployment input and must not be committed.
 
 ```bash
-export AWS_PROFILE=home-mgmt-landing
+export AWS_PROFILE=paws-mgmt-landing
 ./deploy.sh <notification-email>
 
 # Optional limit override; the approved default is $20.
@@ -53,7 +53,7 @@ Decide explicitly whether differences from this repository's $20 and
 CloudFormation does not silently adopt an arbitrary existing budget. The safest
 generic replacement is staged:
 
-1. Deploy `home-budget-alarms`, creating `home-overall-monthly` first.
+1. Deploy `paws-budget-alarms`, creating `paws-overall-monthly` first.
 2. Query the live Budgets API to verify its limit, all four notifications, and
    intended subscriber; do not rely only on stack outputs.
 3. Allow temporary coexistence long enough to prove the managed path and avoid
@@ -71,7 +71,7 @@ aws budgets delete-budget \
 ```
 
 Deletion is irreversible for that budget resource. Immediately verify that the
-legacy name is absent and `home-overall-monthly` still has its expected limit,
+legacy name is absent and `paws-overall-monthly` still has its expected limit,
 notifications, and subscriber.
 
 ## Local validation

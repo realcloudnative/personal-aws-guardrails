@@ -8,7 +8,7 @@ Description: >
 Parameters:
   TestRemediationRoleName:
     Type: String
-    Default: home-cost-quarantine-remediation
+    Default: paws-cost-quarantine-remediation
     AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
     Description: Cross-account role name in the workload accounts.
 
@@ -30,7 +30,7 @@ Resources:
   RemediationLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/vendedlogs/states/home-cost-quarantine-regional-${AWS::Region}
+      LogGroupName: !Sub /aws/vendedlogs/states/paws-cost-quarantine-regional-${AWS::Region}
       RetentionInDays: 30
 
   RegionalStateMachine:
@@ -41,7 +41,7 @@ Resources:
           ignore_checks:
             - E3601
     Properties:
-      StateMachineName: home-cost-quarantine-regional
+      StateMachineName: paws-cost-quarantine-regional
       StateMachineType: STANDARD
       RoleArn: !Ref RegionalExecutionRoleArn
       LoggingConfiguration:
@@ -384,7 +384,7 @@ Resources:
   RegionalTriggerRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: home-cost-quarantine-regional
+      Name: paws-cost-quarantine-regional
       Description: Starts regional remediation on forwarded ExecuteBudgetAction events.
       State: ENABLED
       EventPattern:
