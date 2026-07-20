@@ -46,7 +46,7 @@ Parameters:
 
   LandingZoneAdminSessionDuration:
     Type: String
-    Default: PT2H
+    Default: PT1H
     AllowedPattern: "^PT([1-9]|1[0-2])H$"
 
   IdentityCenterAdminSessionDuration:
@@ -63,6 +63,14 @@ Parameters:
     Type: String
     Default: PT4H
     AllowedPattern: "^PT([1-9]|1[0-2])H$"
+
+  IdentityCenterAdminPermissionSetArn:
+    Type: String
+    AllowedPattern: "^arn:aws:sso:::permissionSet/ssoins-[0-9A-Za-z]+/ps-[0-9A-Za-z]+$"
+    Description: >
+      ARN of the IdentityCenterAdmin permission set (self-referential deny).
+      Required because CloudFormation cannot reference a resource's own ARN
+      within its inline policy without a circular dependency.
 
 
 Rules:
@@ -328,6 +336,18 @@ Resources:
                   ]
                 }
               }
+            },
+            {
+              "Sid": "DenyDestructiveOrgActions",
+              "Effect": "Deny",
+              "Action": [
+                "organizations:LeaveOrganization",
+                "organizations:DeleteOrganization",
+                "organizations:RemoveAccountFromOrganization",
+                "organizations:DisableAWSServiceAccess",
+                "organizations:DeregisterDelegatedAdministrator"
+              ],
+              "Resource": "*"
             }
           ]
         }
@@ -352,6 +372,15 @@ Resources:
               "Resource": "*"
             },
             {
+              "Sid": "AllowIdcProvisioning",
+              "Effect": "Allow",
+              "Action": [
+                "iam:GetRole",
+                "iam:ListAttachedRolePolicies"
+              ],
+              "Resource": "arn:${AWS::Partition}:iam::${ManagementAccountId}:role/aws-reserved/sso.amazonaws.com/*"
+            },
+            {
               "Sid": "ManageQuarantineBoundaryLifecycle",
               "Effect": "Allow",
               "Action": [
@@ -368,6 +397,32 @@ Resources:
                 "iam:UntagPolicy"
               ],
               "Resource": "${CostQuarantineRoleBoundary}"
+            },
+            {
+              "Sid": "DenyAssignIntoManagement",
+              "Effect": "Deny",
+              "Action": [
+                "sso:CreateAccountAssignment",
+                "sso:ProvisionPermissionSet"
+              ],
+              "Resource": "arn:${AWS::Partition}:sso:::account/${ManagementAccountId}"
+            },
+            {
+              "Sid": "DenySelfModify",
+              "Effect": "Deny",
+              "Action": [
+                "sso:PutInlinePolicyToPermissionSet",
+                "sso:DeleteInlinePolicyFromPermissionSet",
+                "sso:UpdatePermissionSet",
+                "sso:DeletePermissionSet",
+                "sso:AttachManagedPolicyToPermissionSet",
+                "sso:DetachManagedPolicyFromPermissionSet",
+                "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
+                "sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
+                "sso:PutPermissionsBoundaryToPermissionSet",
+                "sso:DeletePermissionsBoundaryFromPermissionSet"
+              ],
+              "Resource": "${IdentityCenterAdminPermissionSetArn}"
             }
           ]
         }

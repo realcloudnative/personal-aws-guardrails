@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Detection alarms for the management account: root console sign-in and
+  Identity Center permission-set changes. Sends alerts to SNS. Deploy in
+  us-east-1 (global CloudTrail events land here).
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    AllowedPattern: "^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$"
+    Description: Email address for alarm notifications.
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: paws-security-alerts
+      DisplayName: PAWS Security Alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  RootLoginRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: paws-detect-root-login
+      Description: Fires when root signs in to the console.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.signin
+        detail-type:
+          - AWS Console Sign In via CloudTrail
+        detail:
+          userIdentity:
+            type:
+              - Root
+      Targets:
+        - Id: notify
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              account: $.detail.userIdentity.accountId
+              time: $.detail.eventTime
+              sourceIp: $.detail.sourceIPAddress
+            InputTemplate: |
+              "ALERT: Root console sign-in detected. Account: <account>, Time: <time>, Source IP: <sourceIp>"
+
+  IdcChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: paws-detect-idc-changes
+      Description: Fires on IdC permission-set or assignment changes.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sso
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - sso.amazonaws.com
+          eventName:
+            - CreateAccountAssignment
+            - DeleteAccountAssignment
+            - CreatePermissionSet
+            - DeletePermissionSet
+            - PutInlinePolicyToPermissionSet
+            - DeleteInlinePolicyFromPermissionSet
+            - AttachManagedPolicyToPermissionSet
+            - DetachManagedPolicyFromPermissionSet
+            - UpdatePermissionSet
+            - ProvisionPermissionSet
+      Targets:
+        - Id: notify
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              action: $.detail.eventName
+              principal: $.detail.userIdentity.arn
+              time: $.detail.eventTime
+              sourceIp: $.detail.sourceIPAddress
+            InputTemplate: |
+              "ALERT: IdC change detected. Action: <action>, By: <principal>, Time: <time>, Source IP: <sourceIp>"
+
+  DelegationChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: paws-detect-delegation-changes
+      Description: Fires on delegated-admin registration changes.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.organizations
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - organizations.amazonaws.com
+          eventName:
+            - RegisterDelegatedAdministrator
+            - DeregisterDelegatedAdministrator
+            - PutResourcePolicy
+            - DeleteResourcePolicy
+      Targets:
+        - Id: notify
+          Arn: !Ref AlertTopic
+          InputTransformer:
+            InputPathsMap:
+              action: $.detail.eventName
+              principal: $.detail.userIdentity.arn
+              time: $.detail.eventTime
+            InputTemplate: |
+              "ALERT: Organization delegation change. Action: <action>, By: <principal>, Time: <time>"
+
+  TopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowEventBridgePublish
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlertTopic
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+    Description: SNS topic ARN for security alerts.
