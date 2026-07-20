@@ -210,6 +210,19 @@ The Object Lock protection (`s3:BypassGovernanceRetention` denied) applies
 across all regions, making governance-mode locks unbreakable from member
 accounts while preserving an org-level escape hatch.
 
+### Service allowlist
+
+The service allowlist SCP at the org root defines which AWS services may exist
+in this environment. Everything else is denied regardless of IAM permissions.
+
+**Regional services** (available in your working regions):
+
+![Allow-listed regional services](docs/images/regional-services.png)
+
+**Global services** (available regardless of region):
+
+![Allow-listed global services](docs/images/global-services.png)
+
 ### Components
 
 | Component | Responsibility | Deployment scope |
