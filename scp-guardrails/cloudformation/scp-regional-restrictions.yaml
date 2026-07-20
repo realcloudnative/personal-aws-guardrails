@@ -111,8 +111,6 @@ Resources:
               - "ec2:Get*"
               - "s3:Get*"
               - "s3:List*"
-              - "s3:HeadBucket"
-              - "s3:HeadObject"
               - "lambda:List*"
               - "lambda:Get*"
               - "ecs:List*"
