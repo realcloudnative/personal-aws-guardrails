@@ -164,15 +164,26 @@ flowchart TD
     Opinionated --> O3[No managed databases / clusters]
     Opinionated --> O4[No recurring best-practice extras]
 
+    Prod --> Regional[Regional specialization]
+    Test --> Regional
+
+    Regional --> R1[us-east-1: globals only]
+    Regional --> R2[ap-southeast-1: cleanup only]
+    Regional --> R3[us-west-2: Bedrock only]
+    Regional --> R4[eu-north-1: S3 backup + Bedrock]
+    Regional --> R5[Object Lock protection]
+
     classDef structure fill:#bcd0ee,stroke:#3b5b92,color:#1a2b45;
     classDef policy fill:#a8dcb8,stroke:#2f7d43,color:#12331d;
     classDef universalItem fill:#d9f0e0,stroke:#5a9e6f,color:#12331d;
     classDef opinionatedItem fill:#f8d9b0,stroke:#b3701f,color:#4a2e08;
+    classDef regionalItem fill:#e0d4f5,stroke:#6b4fa0,color:#2d1f4e;
 
     class Root,Prod,Test structure;
-    class Universal,Opinionated policy;
+    class Universal,Opinionated,Regional policy;
     class U1,U2,U3,U4 universalItem;
     class O1,O2,O3,O4 opinionatedItem;
+    class R1,R2,R3,R4,R5 regionalItem;
 ```
 
 **Org root: organization-wide outer boundaries.** These define encryption and
@@ -186,6 +197,18 @@ to find and customize: no RDS, no load balancers, no customer-managed KMS keys,
 small EC2 sizes, and similar constraints. Some statements intentionally repeat
 org-root exclusions as defense in depth. Allowing such a service may therefore
 require changing both the root allowlist and the OU policy.
+
+**OU level: regional specialization.** Each allowed region has a defined purpose.
+Regions get only the permissions their purpose requires:
+- eu-central-1 is the unrestricted primary working region
+- us-east-1 exists only for CloudFront/ACM/WAF (global-service necessities)
+- us-west-2 exists only for Bedrock model availability
+- eu-north-1 serves as S3 cross-region backup and Bedrock access
+- ap-southeast-1 is in cleanup mode (read + delete only, no new resources)
+
+The Object Lock protection (`s3:BypassGovernanceRetention` denied) applies
+across all regions, making governance-mode locks unbreakable from member
+accounts while preserving an org-level escape hatch.
 
 ### Components
 

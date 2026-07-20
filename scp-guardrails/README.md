@@ -160,16 +160,12 @@ One policy, all the environment-specific boundaries. Organized by function:
 
 ### Expensive networking
 - NAT Gateway, Transit Gateway, VPN, Client VPN, EIPs
-- ALB/NLB/Target Groups (defense-in-depth; also blocked by allowlist)
-- VPC Lattice, Network Firewall, Global Accelerator
-- Interface VPC endpoints (Gateway endpoints for S3/DynamoDB remain free)
 
 ### Expensive compute
-- EKS (entire service), DAX, EMR, Batch, MSK, OpenSearch/AOSS
-- `kms:CreateKey` — AWS-managed keys are free and sufficient
-- `bedrock:CreateProvisionedModelThroughput` — use on-demand
-- `bedrock:CreateModelCustomizationJob` — fine-tuning is expensive
-- `lambda:PutProvisionedConcurrencyConfig` — pay-per-use is enough
+- `kms:CreateKey` -- AWS-managed keys are free and sufficient
+- `bedrock:CreateProvisionedModelThroughput` -- use on-demand
+- `bedrock:CreateModelCustomizationJob` -- fine-tuning is expensive
+- `lambda:PutProvisionedConcurrencyConfig` -- pay-per-use is enough
 
 ### CloudWatch dashboards (tag bypass)
 - Deny `cloudwatch:PutDashboard` unless tagged `CreatedBy: manual`
@@ -182,17 +178,10 @@ aws cloudwatch put-dashboard --dashboard-name my-dashboard \
   --tags Key=CreatedBy,Value=manual
 ```
 
-### Expensive storage and databases
-- Provisioned IOPS volumes (io1/io2) — use gp3
-- FSx, Storage Gateway
-- All RDS creation (defense-in-depth; also blocked by allowlist)
-- ElastiCache, Redshift, Neptune, MemoryDB
-- `s3:PutBucketAccelerateConfiguration` — use CloudFront instead
-- `cloudtrail:CreateTrail` — Event History (free, 90 days) is sufficient
-
-### SSM Advanced tier
-- Deny `ssm:PutParameter` with `ssm:parameterTier: Advanced`
-- Standard tier (4KB, 10K params, free) is sufficient
+### Expensive storage
+- Provisioned IOPS volumes (io1/io2) -- use gp3
+- `s3:PutAccelerateConfiguration` -- use CloudFront instead
+- `cloudtrail:CreateTrail` -- Event History (free, 90 days) is sufficient
 
 ## Deploy
 
@@ -240,15 +229,43 @@ scp-guardrails/
 ├── README.md
 ├── deploy.sh
 └── cloudformation/
-    ├── scp-org-baseline.yaml   # Org root: security, regions, allowlist, commitments
-    └── scp-ou-policies.yaml    # OU level: opinionated cost guard (one policy)
+    ├── scp-org-baseline.yaml            # Org root: security, regions, allowlist, commitments
+    ├── scp-ou-policies.yaml             # OU level: opinionated cost guard
+    └── scp-regional-restrictions.yaml   # OU level: per-region specialization + Object Lock
 ```
+
+## OU-level: regional specialization
+
+Each allowed region has a defined purpose. These SCPs enforce that purpose by
+denying everything except what the region is for.
+
+| Region | Policy name | Purpose | Allowed |
+|--------|-------------|---------|---------|
+| us-east-1 | `paws-region-useast1-globals-only` | Global-service necessities | ACM, CloudFront, WAF, S3, Shield, SNS, CloudWatch read, KMS decrypt |
+| ap-southeast-1 | `paws-region-apse1-cleanup-only` | Departing region (ex-Singapore sandbox) | List/Describe/Get + Delete/Terminate/Stop. No create, no invoke. |
+| us-west-2 | `paws-region-uswest2-bedrock-only` | Model availability (Stability AI Ultra, latest LLMs) | Bedrock, Mantle, minimal S3 for artifacts |
+| eu-north-1 | `paws-region-eunorth1-backup-bedrock` | Cross-region S3 backup + Bedrock | S3, KMS (replication), Bedrock, Mantle |
+| eu-central-1 | _(no restriction)_ | Primary working region | Full access within allowlist |
+
+Design: each policy uses a single `NotAction` deny with
+`Condition: { StringEquals: { aws:RequestedRegion: <region> } }`. This means
+everything not in the exception list is denied for that region only.
+
+## OU-level: S3 Object Lock protection
+
+Denies `s3:BypassGovernanceRetention` across all regions.
+
+This makes governance-mode Object Lock unbreakable from member accounts. The
+benefit over compliance mode: if you need to remove the lock (shutting down an
+account, correcting a mistake), detach the SCP from the management account and
+bypass is possible again. Compliance mode is truly irreversible.
+
+Use governance mode + this SCP for important data (state files, backups, audit
+logs). You get the protection of compliance mode with an org-level escape hatch.
 
 ## Future work
 
-- Fine-grained region policies at OU level (S3-only backup, AI innovation,
-  list/describe/delete departing region)
-- Bedrock model restriction via `NotResource`
+- Bedrock model restriction via `NotResource` (limit to specific model ARNs)
 - Lambda runaway mitigation (account-level concurrency limits)
 - Mid-string wildcards for future-proof denies
 - CloudFront risk mitigation
