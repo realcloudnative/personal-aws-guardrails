@@ -496,3 +496,9 @@ by, or representative of my employer. I built it entirely in my own time, on my
 own AWS accounts, using personal resources. It supports personal needs: home file
 backups, church community projects, and other DIY efforts that benefit from a
 well-managed cloud environment without surprising bills.
+
+This is AI-assisted code. I reviewed it, but cost overruns are infrequent events
+and this setup has not been battle-tested through repeated real incidents.
+Scrutinize the code before adopting it. You remain accountable for your own AWS
+spending and account management. Take inspiration from this project, but do not
+blindly rely on it.
