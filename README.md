@@ -488,3 +488,11 @@ disagree, and how the behavior can be tested safely.
 ## License
 
 Released under the [MIT No Attribution (MIT-0) license](./LICENSE).
+
+## Disclaimer
+
+This project represents my personal views and is not affiliated with, endorsed
+by, or representative of my employer. I built it entirely in my own time, on my
+own AWS accounts, using personal resources. It supports personal needs: home file
+backups, church community projects, and other DIY efforts that benefit from a
+well-managed cloud environment without surprising bills.
