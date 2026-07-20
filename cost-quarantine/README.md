@@ -128,16 +128,46 @@ for details.
 
 ## Containment policy
 
-The SCP denies selected actions that can create or increase common spend,
-including new/start compute, load balancers, NAT gateways, database creation or
-start, ECS/EKS starts, Step Functions starts, metered AI inference (including
-Bedrock Mantle), and selected paid batch jobs.
+The quarantine SCP uses a **blanket deny with surgical exceptions** (`NotAction`).
+When attached, the account is frozen: no data-plane operations, no new resources,
+no invocations, no Lambda executions, no S3 reads/writes.
 
-It deliberately does **not** deny stop, delete, terminate, remove,
-describe/list/get, support, or billing actions. It also leaves mitigation update
-APIs such as `ecs:UpdateService` and
-`autoscaling:UpdateAutoScalingGroup` available. The policy never automatically
-deletes a resource.
+Exceptions exist only for:
+- **Remediation**: the state machine's stop/scale/disable/throttle actions
+- **Investigation**: read-only CloudWatch, Cost Explorer, CloudFormation, tags
+- **Support**: filing AWS support cases during the incident
+
+This approach closes the gap where a selective denylist would miss services
+(Lambda invocations through resource-based policies, DynamoDB reads, API Gateway
+traffic, etc.).
+
+### Remediation order
+
+The state machine actively reduces compute in this sequence:
+
+1. **ECS services → desired count 0** (disarms the ECS scheduler)
+2. **ASG groups → desired capacity 0** (disarms the ASG controller)
+3. **EC2 instances → stopped** (catches instances not behind controllers)
+4. **EventBridge rules → disabled** (stops event-driven invocation sources)
+5. **EventBridge Scheduler schedules → disabled** (stops scheduled invocations)
+6. **Lambda functions → reserved concurrency 0** (blocks all invocations)
+
+The order matters: event sources are disabled before Lambda is throttled, so no
+new invocations are queued while concurrency is being reduced.
+
+### Why Lambda needs active remediation
+
+The quarantine SCP cannot stop EventBridge from invoking Lambda. EventBridge
+invokes Lambda through a **resource-based policy** on the function, not through
+an IAM role. SCPs only evaluate calls made by IAM principals, not service-to-
+service invocations through resource policies. Setting reserved concurrency to 0
+is the only way to stop a runaway EventBridge-to-Lambda feedback loop.
+
+### Why EventBridge rules are disabled
+
+Even with Lambda throttled, enabled rules still attempt invocations (which fail
+and may retry). Disabling rules stops the invocation attempts entirely and
+prevents any remaining targets (SNS, SQS, Step Functions) from being triggered.
 
 SCPs limit permissions but grant none. They do not restrict the management
 account or AWS service-linked roles.

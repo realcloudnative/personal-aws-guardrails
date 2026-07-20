@@ -53,7 +53,7 @@ Resources:
       DefinitionSubstitutions:
         RemediationRoleName: !Ref TestRemediationRoleName
       Definition:
-        Comment: !Sub "Single-region remediation: ECS scale-to-zero, ASG scale-to-zero, EC2 stop (${AWS::Region})."
+        Comment: !Sub "Single-region remediation: ECS scale-to-zero, ASG scale-to-zero, EC2 stop, EventBridge disable, Lambda concurrency-to-zero (${AWS::Region})."
         QueryLanguage: JSONata
         TimeoutSeconds: 1800
         StartAt: ExtractTarget
@@ -116,7 +116,7 @@ Resources:
             Choices:
               - Next: Ec2DescribeInstancesPage
                 Condition: "{% $exists($ec2NextToken) and $ec2NextToken != null %}"
-            Default: Done
+            Default: EventsListRules
           Ec2DescribeInstancesPage:
             Type: Task
             Resource: arn:aws:states:::aws-sdk:ec2:describeInstances
@@ -378,6 +378,290 @@ Resources:
                 MaxDelaySeconds: 15
                 JitterStrategy: FULL
             Next: EcsClusterCheck
+          # --- EventBridge Rules: disable all enabled rules ---
+          EventsListRules:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:eventbridge:listRules
+            Arguments:
+              Limit: 100
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              eventsNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
+              eventsRules: "{% $append([], $states.result.Rules[State='ENABLED'].Name ? $states.result.Rules[State='ENABLED'].Name : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: EventsDisableCheck
+          EventsDisableCheck:
+            Type: Choice
+            Choices:
+              - Next: EventsDisableRules
+                Condition: "{% $count($eventsRules) > 0 %}"
+            Default: EventsPaginateCheck
+          EventsDisableRules:
+            Type: Map
+            Items: "{% $eventsRules %}"
+            MaxConcurrency: 10
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: EventsDisableRule
+              States:
+                EventsDisableRule:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:eventbridge:disableRule
+                  Arguments:
+                    Name: "{% $states.input %}"
+                  Credentials:
+                    RoleArn: "{% $remediationRoleArn %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Next: EventsRuleDone
+                  Next: EventsRuleDone
+                EventsRuleDone:
+                  Type: Pass
+                  End: true
+            Next: EventsPaginateCheck
+          EventsPaginateCheck:
+            Type: Choice
+            Choices:
+              - Next: EventsListRulesPage
+                Condition: "{% $exists($eventsNextToken) and $eventsNextToken != null %}"
+            Default: SchedulerListSchedules
+          EventsListRulesPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:eventbridge:listRules
+            Arguments:
+              Limit: 100
+              NextToken: "{% $eventsNextToken %}"
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              eventsNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
+              eventsRules: "{% $append([], $states.result.Rules[State='ENABLED'].Name ? $states.result.Rules[State='ENABLED'].Name : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: EventsDisableCheck
+          # --- EventBridge Scheduler: disable all enabled schedules ---
+          SchedulerListSchedules:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:scheduler:listSchedules
+            Arguments:
+              MaxResults: 100
+              State: ENABLED
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              schedulerNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
+              schedulerSchedules: "{% $append([], $states.result.Schedules[].Name ? $states.result.Schedules[].Name : []) %}"
+              schedulerGroups: "{% $append([], $states.result.Schedules[].GroupName ? $states.result.Schedules[].GroupName : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: SchedulerDisableCheck
+          SchedulerDisableCheck:
+            Type: Choice
+            Choices:
+              - Next: SchedulerDisableSchedules
+                Condition: "{% $count($schedulerSchedules) > 0 %}"
+            Default: SchedulerPaginateCheck
+          SchedulerDisableSchedules:
+            Type: Map
+            Items: "{% $zip($schedulerSchedules, $schedulerGroups) %}"
+            MaxConcurrency: 5
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: SchedulerGetSchedule
+              States:
+                SchedulerGetSchedule:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:scheduler:getSchedule
+                  Arguments:
+                    Name: "{% $states.input[0] %}"
+                    GroupName: "{% $states.input[1] %}"
+                  Credentials:
+                    RoleArn: "{% $remediationRoleArn %}"
+                  Assign:
+                    scheduleDetail: "{% $states.result %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Next: SchedulerItemDone
+                  Next: SchedulerUpdateSchedule
+                SchedulerUpdateSchedule:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:scheduler:updateSchedule
+                  Arguments:
+                    Name: "{% $scheduleDetail.Name %}"
+                    GroupName: "{% $scheduleDetail.GroupName %}"
+                    ScheduleExpression: "{% $scheduleDetail.ScheduleExpression %}"
+                    FlexibleTimeWindow: "{% $scheduleDetail.FlexibleTimeWindow %}"
+                    Target: "{% $scheduleDetail.Target %}"
+                    State: DISABLED
+                  Credentials:
+                    RoleArn: "{% $remediationRoleArn %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Next: SchedulerItemDone
+                  Next: SchedulerItemDone
+                SchedulerItemDone:
+                  Type: Pass
+                  End: true
+            Next: SchedulerPaginateCheck
+          SchedulerPaginateCheck:
+            Type: Choice
+            Choices:
+              - Next: SchedulerListSchedulesPage
+                Condition: "{% $exists($schedulerNextToken) and $schedulerNextToken != null %}"
+            Default: LambdaListFunctions
+          SchedulerListSchedulesPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:scheduler:listSchedules
+            Arguments:
+              MaxResults: 100
+              State: ENABLED
+              NextToken: "{% $schedulerNextToken %}"
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              schedulerNextToken: "{% $states.result.NextToken ? $states.result.NextToken : null %}"
+              schedulerSchedules: "{% $append([], $states.result.Schedules[].Name ? $states.result.Schedules[].Name : []) %}"
+              schedulerGroups: "{% $append([], $states.result.Schedules[].GroupName ? $states.result.Schedules[].GroupName : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: SchedulerDisableCheck
+          # --- Lambda: set reserved concurrency to 0 on all functions ---
+          LambdaListFunctions:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:lambda:listFunctions
+            Arguments:
+              MaxItems: 50
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              lambdaNextMarker: "{% $states.result.NextMarker ? $states.result.NextMarker : null %}"
+              lambdaFunctions: "{% $append([], $states.result.Functions[].FunctionName ? $states.result.Functions[].FunctionName : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: LambdaThrottleCheck
+          LambdaThrottleCheck:
+            Type: Choice
+            Choices:
+              - Next: LambdaThrottleFunctions
+                Condition: "{% $count($lambdaFunctions) > 0 %}"
+            Default: LambdaPaginateCheck
+          LambdaThrottleFunctions:
+            Type: Map
+            Items: "{% $lambdaFunctions %}"
+            MaxConcurrency: 10
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: LambdaPutConcurrency
+              States:
+                LambdaPutConcurrency:
+                  Type: Task
+                  Resource: arn:aws:states:::aws-sdk:lambda:putFunctionConcurrency
+                  Arguments:
+                    FunctionName: "{% $states.input %}"
+                    ReservedConcurrentExecutions: 0
+                  Credentials:
+                    RoleArn: "{% $remediationRoleArn %}"
+                  Output: "{}"
+                  Retry:
+                    - ErrorEquals: [States.ALL]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                      MaxDelaySeconds: 15
+                      JitterStrategy: FULL
+                  Catch:
+                    - ErrorEquals: [States.ALL]
+                      Next: LambdaFunctionDone
+                  Next: LambdaFunctionDone
+                LambdaFunctionDone:
+                  Type: Pass
+                  End: true
+            Next: LambdaPaginateCheck
+          LambdaPaginateCheck:
+            Type: Choice
+            Choices:
+              - Next: LambdaListFunctionsPage
+                Condition: "{% $exists($lambdaNextMarker) and $lambdaNextMarker != null %}"
+            Default: Done
+          LambdaListFunctionsPage:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:lambda:listFunctions
+            Arguments:
+              MaxItems: 50
+              Marker: "{% $lambdaNextMarker %}"
+            Credentials:
+              RoleArn: "{% $remediationRoleArn %}"
+            Assign:
+              lambdaNextMarker: "{% $states.result.NextMarker ? $states.result.NextMarker : null %}"
+              lambdaFunctions: "{% $append([], $states.result.Functions[].FunctionName ? $states.result.Functions[].FunctionName : []) %}"
+            Output: "{}"
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+                MaxDelaySeconds: 15
+                JitterStrategy: FULL
+            Next: LambdaThrottleCheck
           Done:
             Type: Succeed
 

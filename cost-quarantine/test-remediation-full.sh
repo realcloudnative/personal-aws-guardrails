@@ -15,6 +15,22 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 cleanup() {
   printf '\nCleaning up...\n'
   # Best-effort cleanup in reverse order
+  if [[ -n "${lambda_name:-}" ]]; then
+    aws --profile "$TEST_PROFILE" --region "$REGION" lambda delete-function \
+      --function-name "$lambda_name" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${rule_name:-}" ]]; then
+    aws --profile "$TEST_PROFILE" --region "$REGION" events remove-targets \
+      --rule "$rule_name" --ids target1 >/dev/null 2>&1 || true
+    aws --profile "$TEST_PROFILE" --region "$REGION" events delete-rule \
+      --name "$rule_name" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${lambda_role_arn:-}" ]]; then
+    aws --profile "$TEST_PROFILE" --region "$REGION" iam delete-role-policy \
+      --role-name "$lambda_role_name" --policy-name inline >/dev/null 2>&1 || true
+    aws --profile "$TEST_PROFILE" --region "$REGION" iam delete-role \
+      --role-name "$lambda_role_name" >/dev/null 2>&1 || true
+  fi
   if [[ -n "${service_arn:-}" ]]; then
     aws --profile "$TEST_PROFILE" --region "$REGION" ecs delete-service \
       --cluster "$cluster_arn" --service "$service_arn" --force >/dev/null 2>&1 || true
@@ -139,6 +155,48 @@ instance_id=$(aws --profile "$TEST_PROFILE" --region "$REGION" ec2 run-instances
   --query 'Instances[0].InstanceId' --output text)
 printf '   Instance: %s\n' "$instance_id"
 
+# --- 4. Create Lambda function ---
+printf '4. Creating Lambda function...\n'
+lambda_name="quarantine-test-fn-${ts}"
+lambda_role_name="quarantine-test-lambda-role-${ts}"
+
+lambda_role_arn=$(aws --profile "$TEST_PROFILE" --region "$REGION" iam create-role \
+  --role-name "$lambda_role_name" \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+  --query 'Role.Arn' --output text)
+aws --profile "$TEST_PROFILE" --region "$REGION" iam put-role-policy \
+  --role-name "$lambda_role_name" --policy-name inline \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"logs:*","Resource":"*"}]}'
+printf '   Lambda role: %s\n' "$lambda_role_arn"
+sleep 10  # wait for role propagation
+
+aws --profile "$TEST_PROFILE" --region "$REGION" lambda create-function \
+  --function-name "$lambda_name" \
+  --runtime python3.12 \
+  --role "$lambda_role_arn" \
+  --handler index.handler \
+  --zip-file fileb://<(python3 -c "
+import zipfile, io
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, 'w') as z:
+    z.writestr('index.py', 'def handler(event, context): return {\"status\": \"ok\"}')
+import sys; sys.stdout.buffer.write(buf.getvalue())
+") \
+  --timeout 10 --memory-size 128 >/dev/null
+printf '   Function: %s\n' "$lambda_name"
+
+# --- 5. Create EventBridge rule ---
+printf '5. Creating EventBridge rule...\n'
+rule_name="quarantine-test-rule-${ts}"
+aws --profile "$TEST_PROFILE" --region "$REGION" events put-rule \
+  --name "$rule_name" \
+  --schedule-expression "rate(1 hour)" \
+  --state ENABLED >/dev/null
+aws --profile "$TEST_PROFILE" --region "$REGION" events put-targets \
+  --rule "$rule_name" \
+  --targets "[{\"Id\":\"target1\",\"Arn\":\"arn:aws:lambda:${REGION}:${test_account}:function:${lambda_name}\"}]" >/dev/null
+printf '   Rule: %s (ENABLED)\n' "$rule_name"
+
 # --- Wait for resources to stabilize ---
 printf '\nWaiting for ASG instance and standalone EC2 to reach running...\n'
 aws --profile "$TEST_PROFILE" --region "$REGION" ec2 wait instance-running --instance-ids "$instance_id"
@@ -202,8 +260,20 @@ ec2_state=$(aws --profile "$TEST_PROFILE" --region "$REGION" ec2 describe-instan
 printf '  Standalone EC2 state: %s ' "$ec2_state"
 if [[ "$ec2_state" == "stopped" || "$ec2_state" == "stopping" ]]; then printf '✓\n'; else printf '✗ (expected stopped/stopping)\n'; pass=false; fi
 
+# EventBridge rule state
+rule_state=$(aws --profile "$TEST_PROFILE" --region "$REGION" events describe-rule \
+  --name "$rule_name" --query 'State' --output text)
+printf '  EventBridge rule state: %s ' "$rule_state"
+if [[ "$rule_state" == "DISABLED" ]]; then printf '✓\n'; else printf '✗ (expected DISABLED)\n'; pass=false; fi
+
+# Lambda reserved concurrency
+lambda_concurrency=$(aws --profile "$TEST_PROFILE" --region "$REGION" lambda get-function-concurrency \
+  --function-name "$lambda_name" --query 'ReservedConcurrentExecutions' --output text 2>/dev/null || echo "None")
+printf '  Lambda reserved concurrency: %s ' "$lambda_concurrency"
+if [[ "$lambda_concurrency" == "0" ]]; then printf '✓\n'; else printf '✗ (expected 0)\n'; pass=false; fi
+
 if [[ "$pass" == "true" && "$status" == "SUCCEEDED" ]]; then
-  printf '\n✓ FULL PASS: All three resource types remediated correctly.\n'
+  printf '\n✓ FULL PASS: All resource types remediated correctly.\n'
 else
   printf '\n✗ PARTIAL FAIL: State machine %s. Check results above.\n' "$status"
   exit 1

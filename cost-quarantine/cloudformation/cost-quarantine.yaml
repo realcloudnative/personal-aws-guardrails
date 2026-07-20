@@ -107,7 +107,7 @@ Resources:
             Effect: Deny
             Resource: "*"
             NotAction:
-              # --- Remediation: stop/scale/terminate (state machine needs these) ---
+              # --- Remediation: stop/scale/disable (state machine needs these) ---
               - ec2:StopInstances
               - ec2:DescribeInstances
               - ecs:ListClusters
@@ -115,6 +115,13 @@ Resources:
               - ecs:UpdateService
               - autoscaling:DescribeAutoScalingGroups
               - autoscaling:UpdateAutoScalingGroup
+              - events:ListRules
+              - events:DisableRule
+              - scheduler:ListSchedules
+              - scheduler:GetSchedule
+              - scheduler:UpdateSchedule
+              - lambda:ListFunctions
+              - lambda:PutFunctionConcurrency
               # --- Investigation: read-only control plane ---
               - cloudwatch:GetMetricData
               - cloudwatch:ListMetrics

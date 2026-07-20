@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Workload-account side of the home cost-quarantine workflow. Deployed via
+  Workload-account side of the cost-quarantine workflow. Deployed via
   service-managed StackSet to all workload OUs. Creates the narrowly scoped role
   assumed by the management-account regional Step Functions state machines via
-  SDK integration Credentials. It permits enumeration, stop, and scale-to-zero
-  for EC2, ASG, and ECS only. It does not permit delete, terminate, or remove
-  operations.
+  SDK integration Credentials. It permits enumeration, stop, scale-to-zero,
+  disable rules/schedules, and throttle Lambda. It does not permit delete,
+  terminate, or remove operations.
 
 Parameters:
   ManagementAccountId:
@@ -24,7 +24,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Ref TestRemediationRoleName
-      Description: Reversible stop and scale-to-zero permissions for Test cost quarantine.
+      Description: Reversible stop, scale-to-zero, and disable permissions for cost quarantine.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -48,6 +48,9 @@ Resources:
                   - autoscaling:DescribeAutoScalingGroups
                   - ecs:ListClusters
                   - ecs:ListServices
+                  - lambda:ListFunctions
+                  - events:ListRules
+                  - scheduler:ListSchedules
                 Resource: "*"
               - Sid: StopEc2
                 Effect: Allow
@@ -61,6 +64,20 @@ Resources:
                 Effect: Allow
                 Action: ecs:UpdateService
                 Resource: !Sub arn:${AWS::Partition}:ecs:*:${AWS::AccountId}:service/*
+              - Sid: ThrottleLambdaFunctions
+                Effect: Allow
+                Action: lambda:PutFunctionConcurrency
+                Resource: !Sub arn:${AWS::Partition}:lambda:*:${AWS::AccountId}:function:*
+              - Sid: DisableEventBridgeRules
+                Effect: Allow
+                Action: events:DisableRule
+                Resource: !Sub arn:${AWS::Partition}:events:*:${AWS::AccountId}:rule/*
+              - Sid: DisableSchedules
+                Effect: Allow
+                Action:
+                  - scheduler:GetSchedule
+                  - scheduler:UpdateSchedule
+                Resource: !Sub arn:${AWS::Partition}:scheduler:*:${AWS::AccountId}:schedule/*/*
       Tags:
         - Key: home:workflow
           Value: cost-quarantine
