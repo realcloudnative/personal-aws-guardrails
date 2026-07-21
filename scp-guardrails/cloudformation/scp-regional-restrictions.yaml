@@ -50,6 +50,10 @@ Resources:
           - Sid: UsEast1AllowOnlyGlobalNecessities
             Effect: Deny
             NotAction:
+              # Global services that route through us-east-1
+              - iam:*
+              - sts:*
+              - organizations:*
               # ACM: public certs for CloudFront
               - acm:*
               # CloudFront control-plane calls land in us-east-1
