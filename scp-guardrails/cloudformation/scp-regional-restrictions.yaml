@@ -21,70 +21,7 @@ Conditions:
 
 Resources:
   # ─────────────────────────────────────────────────────────────────────────
-  # 1. US-EAST-1: Global-service necessities only.
-  # CloudFront requires ACM certs in us-east-1. Route 53, IAM, Organizations,
-  # Budgets etc. are global (handled by the region lock NotAction). Here we
-  # restrict what regional services can do in us-east-1.
-  # ─────────────────────────────────────────────────────────────────────────
-  UsEast1NecessitiesOnly:
-    Type: AWS::Organizations::Policy
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Name: !Sub ${PolicyNamePrefix}-region-useast1-globals-only
-      Type: SERVICE_CONTROL_POLICY
-      Description: >
-        US-East-1 restricted to global-service necessities: ACM for
-        CloudFront, CloudFront distributions, WAF for CloudFront,
-        and S3 (CloudFront origin). No compute, no databases, no general use.
-      TargetIds: !If
-        - Attach
-        - !Split [",", !Ref TargetIds]
-        - !Ref AWS::NoValue
-      Tags:
-        - Key: project
-          Value: personal-aws-guardrails
-      Content:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: UsEast1AllowOnlyGlobalNecessities
-            Effect: Deny
-            NotAction:
-              # Global services that route through us-east-1
-              - iam:*
-              - sts:*
-              - organizations:*
-              # ACM: public certs for CloudFront
-              - acm:*
-              # CloudFront control-plane calls land in us-east-1
-              - cloudfront:*
-              # WAF v2 for CloudFront (scope=CLOUDFRONT requires us-east-1)
-              - wafv2:*
-              # S3: CloudFront origins, state buckets, log delivery
-              - s3:*
-              # Shield Advanced (CloudFront protection)
-              - shield:*
-              # SNS: CloudFront and ACM notifications
-              - sns:*
-              # CloudWatch: metrics for CloudFront/WAF
-              - cloudwatch:Get*
-              - cloudwatch:List*
-              - cloudwatch:Describe*
-              # Logs: WAF logging
-              - logs:*
-              # KMS: decrypt objects for CloudFront origins
-              - kms:Decrypt
-              - kms:DescribeKey
-              - kms:GenerateDataKey*
-              - kms:ListKeys
-              - kms:ListAliases
-            Resource: "*"
-            Condition:
-              StringEquals:
-                aws:RequestedRegion: us-east-1
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 2. AP-SOUTHEAST-1 (Singapore): Departing region, cleanup only.
+  # 1. AP-SOUTHEAST-1 (Singapore): Departing region, cleanup only.
   # Allow list/describe/get/delete. Deny create/put/start/invoke/run.
   # ─────────────────────────────────────────────────────────────────────────
   ApSoutheast1Cleanup:
@@ -167,7 +104,7 @@ Resources:
                 aws:RequestedRegion: ap-southeast-1
 
   # ─────────────────────────────────────────────────────────────────────────
-  # 3. US-WEST-2: Bedrock innovation only.
+  # 2. US-WEST-2: Bedrock innovation only.
   # Only Bedrock runtime + model management. Nothing else.
   # ─────────────────────────────────────────────────────────────────────────
   UsWest2BedrockOnly:
@@ -207,7 +144,7 @@ Resources:
                 aws:RequestedRegion: us-west-2
 
   # ─────────────────────────────────────────────────────────────────────────
-  # 4. EU-NORTH-1 (Stockholm): S3 backup + Bedrock.
+  # 3. EU-NORTH-1 (Stockholm): S3 backup + Bedrock.
   # Cross-region replication target and Bedrock access.
   # ─────────────────────────────────────────────────────────────────────────
   EuNorth1BackupAndBedrock:
@@ -254,7 +191,7 @@ Resources:
                 aws:RequestedRegion: eu-north-1
 
   # ─────────────────────────────────────────────────────────────────────────
-  # 5. S3 Object Lock: deny bypass of governance retention.
+  # 4. S3 Object Lock: deny bypass of governance retention.
   # Makes governance-mode locks unbreakable from member accounts.
   # Governance mode = deletions blocked but can be overridden with
   # BypassGovernanceRetention. This SCP removes that override ability,
@@ -287,8 +224,6 @@ Resources:
             Resource: "*"
 
 Outputs:
-  UsEast1PolicyId:
-    Value: !Ref UsEast1NecessitiesOnly
   ApSoutheast1PolicyId:
     Value: !Ref ApSoutheast1Cleanup
   UsWest2PolicyId:

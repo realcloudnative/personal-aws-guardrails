@@ -172,7 +172,6 @@ aws cloudformation deploy \
   --no-fail-on-empty-changeset \
   --parameter-overrides \
     "PolicyNamePrefix=$POLICY_NAME_PREFIX" \
-    "AllowedRegions=$ALLOWED_REGIONS" \
     "OrgRootTargetId=$ORG_ROOT_ID"
 
 echo "Org-root baseline deployed."

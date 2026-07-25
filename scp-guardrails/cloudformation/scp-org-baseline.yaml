@@ -12,10 +12,8 @@ Parameters:
     AllowedPattern: "^[A-Za-z0-9_-]{1,40}$"
     Description: Provenance prefix for policy names (identifies project-managed SCPs).
 
-  AllowedRegions:
-    Type: CommaDelimitedList
-    Default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1
-    Description: Regions allowed by the region-lock policy.
+  # Allowed regions (inlined in region-lock JSON policy below):
+  # us-east-1, us-west-2, eu-central-1, eu-north-1, ap-southeast-1
 
   OrgRootTargetId:
     Type: String
@@ -116,7 +114,10 @@ Resources:
     Properties:
       Name: !Sub ${PolicyNamePrefix}-region-lock
       Type: SERVICE_CONTROL_POLICY
-      Description: Deny all regional actions outside the allowed-region list; exempt global services.
+      Description: >
+        Deny all regional actions outside the allowed-region list (exempt global
+        services). Also restrict us-east-1 to CloudFront necessities only — no
+        general compute or storage.
       TargetIds: !If
         - AttachToRoot
         - - !Ref OrgRootTargetId
@@ -128,43 +129,80 @@ Resources:
           Value: scp-guardrails
         - Key: managed-by
           Value: cloudformation
-      Content:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: DenyOutsideAllowedRegions
-            Effect: Deny
-            NotAction:
-              - account:*
-              - artifact:*
-              - aws-external-anthropic:*
-              - aws-portal:*
-              - billing:*
-              - budgets:*
-              - ce:*
-              - consolidatedbilling:*
-              - cur:*
-              - freetier:*
-              - invoicing:*
-              - payments:*
-              - tax:*
-              - bcm-data-exports:*
-              - cost-optimization-hub:*
-              - purchase-orders:*
-              - cloudfront:*
-              - cloudfront-keyvaluestore:*
-              - health:*
-              - iam:*
-              - organizations:*
-              - route53:*
-              - route53domains:*
-              - sts:*
-              - support:*
-              - supportplans:*
-              - trustedadvisor:*
-            Resource: "*"
-            Condition:
-              StringNotEquals:
-                aws:RequestedRegion: !Ref AllowedRegions
+      Content: !Sub
+        - |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "DenyOutsideAllowedRegions",
+                "Effect": "Deny",
+                "NotAction": [${GlobalServices}],
+                "Resource": "*",
+                "Condition": {
+                  "StringNotEquals": {
+                    "aws:RequestedRegion": ["us-east-1","us-west-2","eu-central-1","eu-north-1","ap-southeast-1"]
+                  }
+                }
+              },
+              {
+                "Sid": "UsEast1AllowOnlyGlobalAndCloudfrontNecessities",
+                "Effect": "Deny",
+                "NotAction": [
+                  ${GlobalServices},
+                  "acm:*",
+                  "cloudfront:*",
+                  "cloudfront-keyvaluestore:*",
+                  "wafv2:*",
+                  "shield:*",
+                  "s3:*",
+                  "sns:*",
+                  "cloudwatch:Get*",
+                  "cloudwatch:List*",
+                  "cloudwatch:Describe*",
+                  "logs:*",
+                  "kms:Decrypt",
+                  "kms:DescribeKey",
+                  "kms:GenerateDataKey*",
+                  "kms:ListKeys",
+                  "kms:ListAliases"
+                ],
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "aws:RequestedRegion": "us-east-1"
+                  }
+                }
+              }
+            ]
+          }
+        - GlobalServices: >-
+            "account:*",
+            "artifact:*",
+            "aws-external-anthropic:*",
+            "aws-portal:*",
+            "bcm-data-exports:*",
+            "billing:*",
+            "budgets:*",
+            "ce:*",
+            "consolidatedbilling:*",
+            "cost-optimization-hub:*",
+            "cur:*",
+            "freetier:*",
+            "health:*",
+            "iam:*",
+            "invoicing:*",
+            "organizations:*",
+            "payments:*",
+            "purchase-orders:*",
+            "route53:*",
+            "route53domains:*",
+            "sts:*",
+            "support:*",
+            "supportplans:*",
+            "tax:*",
+            "trustedadvisor:*"
+          AllowedRegionsJson: '["us-east-1","us-west-2","eu-central-1","eu-north-1","ap-southeast-1"]'
 
   ServiceAllowlistPolicy:
     Type: AWS::Organizations::Policy
