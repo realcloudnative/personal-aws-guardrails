@@ -151,6 +151,7 @@ Resources:
                 "NotAction": [
                   ${GlobalServices},
                   "acm:*",
+                  "cloudformation:*",
                   "cloudfront:*",
                   "cloudfront-keyvaluestore:*",
                   "wafv2:*",

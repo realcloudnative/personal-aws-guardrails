@@ -247,7 +247,8 @@ Resources:
                 "guardduty:UpdateDetector",
                 "guardduty:DeleteDetector",
                 "guardduty:TagResource",
-                "guardduty:UntagResource"
+                "guardduty:UntagResource",
+                "uxc:UpdateAccountCustomizations"
               ],
               "Resource": "*"
             },

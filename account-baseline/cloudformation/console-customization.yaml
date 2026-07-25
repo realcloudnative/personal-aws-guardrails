@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Console customization: account color for visual identification, visible
+  regions matching the landing zone region-lock, and visible services matching
+  the service allowlist. Reduces console clutter and reinforces the guardrails
+  visually. Deploy per account in us-east-1 (UXC resource only available there).
+
+Parameters:
+  AccountColor:
+    Type: String
+    AllowedValues: [none, pink, purple, darkBlue, lightBlue, teal, green, yellow, orange, red]
+    Description: Console banner color for this account.
+
+  AccountType:
+    Type: String
+    AllowedValues: [workload, management]
+    Default: workload
+    Description: Controls which services and regions are shown.
+
+Conditions:
+  IsWorkload: !Equals [!Ref AccountType, workload]
+
+Resources:
+  ConsoleCustomization:
+    Type: AWS::UXC::AccountCustomization
+    Properties:
+      AccountColor: !Ref AccountColor
+      VisibleRegions: !If
+        - IsWorkload
+        - - eu-central-1
+          - eu-north-1
+          - us-east-1
+          - us-west-2
+          - ap-southeast-1
+        - - eu-central-1
+          - us-east-1
+      VisibleServices: !If
+        - IsWorkload
+        # Workload accounts: full allowlist
+        - - acm
+          - apigateway
+          - athena
+          - bedrock
+          - bedrock-agentcore
+          - bedrock-mantle
+          - ce
+          - cloudformation
+          - cloudfront
+          - cloudshell
+          - cloudtrail
+          - cloudwatch
+          - codecommit
+          - cognito
+          - dynamodb
+          - ec2
+          - ecr
+          - ecs
+          - events
+          - glue
+          - guardduty
+          - iam
+          - kms
+          - lambda
+          - resource-explorer
+          - route53
+          - s3
+          - sns
+          - sqs
+          - ssm
+          - states
+          - support
+          - trustedadvisor
+          - vpc
+        # Management account: admin-only services
+        - - ce
+          - cloudformation
+          - cloudtrail
+          - cloudwatch
+          - events
+          - iam
+          - organizations
+          - s3
+          - sns
+          - sso
+          - states
+          - support
+          - trustedadvisor
+
+Outputs:
+  AccountId:
+    Value: !Ref ConsoleCustomization
+    Description: Account ID this customization applies to.
