@@ -402,10 +402,7 @@ Resources:
             {
               "Sid": "DenyAssignIntoManagement",
               "Effect": "Deny",
-              "Action": [
-                "sso:CreateAccountAssignment",
-                "sso:ProvisionPermissionSet"
-              ],
+              "Action": "sso:CreateAccountAssignment",
               "Resource": "arn:${AWS::Partition}:sso:::account/${ManagementAccountId}"
             },
             {
