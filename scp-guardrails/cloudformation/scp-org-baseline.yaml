@@ -191,17 +191,22 @@ Resources:
             "freetier:*",
             "health:*",
             "iam:*",
+            "identitystore:*",
             "invoicing:*",
             "organizations:*",
             "payments:*",
             "purchase-orders:*",
             "route53:*",
             "route53domains:*",
+            "sso:*",
+            "sso-directory:*",
+            "sso-oauth:*",
             "sts:*",
             "support:*",
             "supportplans:*",
             "tax:*",
-            "trustedadvisor:*"
+            "trustedadvisor:*",
+            "uxc:*"
           AllowedRegionsJson: '["us-east-1","us-west-2","eu-central-1","eu-north-1","ap-southeast-1"]'
 
   ServiceAllowlistPolicy:
