@@ -115,8 +115,9 @@ read -r CALLER_ACCOUNT CALLER_ARN CALLER_USER_ID < <(
 )
 printf 'AWS identity:\n  Account: %s\n  ARN:     %s\n  UserId:  %s\n' \
   "$CALLER_ACCOUNT" "$CALLER_ARN" "$CALLER_USER_ID"
-if [[ "$CALLER_ARN" != arn:aws:sts::*:assumed-role/AWSReservedSSO_LandingZoneAdmin_*/* ]]; then
-  echo "Error: SCP deployment requires the LandingZoneAdmin SSO role, not $CALLER_ARN." >&2
+if [[ "$CALLER_ARN" != arn:aws:sts::*:assumed-role/AWSReservedSSO_LandingZoneAdmin_*/* \
+      && "$CALLER_ARN" != arn:aws:iam::*:user/* ]]; then
+  echo "Error: SCP deployment requires the LandingZoneAdmin SSO role or a management-account IAM user, not $CALLER_ARN." >&2
   exit 1
 fi
 

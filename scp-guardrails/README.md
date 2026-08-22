@@ -141,6 +141,13 @@ services (IAM, STS, Route 53, CloudFront, billing, etc.) are exempted.
 Default regions: `us-east-1`, `us-west-2`, `eu-central-1`, `eu-north-1`,
 `ap-southeast-1`.
 
+Within us-east-1 only global services and CloudFront necessities are allowed:
+ACM, CloudFront, WAF, Shield, S3, SNS, logs, CloudWatch reads,
+`cloudtrail:LookupEvents` (global-service events — CloudFront, IAM, Route 53 —
+are recorded only in us-east-1) and the KMS calls ACM needs, including
+`kms:CreateGrant`, which ACM issues on the caller's behalf when a certificate is
+attached to a CloudFront distribution.
+
 Future: fine-grained region policies at OU level (S3-only backup region,
 AI-only innovation regions) using the new Allow+Condition SCP language.
 
@@ -185,7 +192,9 @@ aws cloudwatch put-dashboard --dashboard-name my-dashboard \
 
 ## Deploy
 
-Prerequisites: AWS CLI v2, LandingZoneAdmin SSO profile, management account.
+Prerequisites: AWS CLI v2, management account, and either the LandingZoneAdmin
+SSO profile or a management-account IAM user signed in with `aws login` (that
+user needs the `SignInLocalDevelopmentAccess` managed policy).
 
 Deploy detached (review policies before attaching):
 ```bash
@@ -241,7 +250,7 @@ denying everything except what the region is for.
 
 | Region | Policy name | Purpose | Allowed |
 |--------|-------------|---------|---------|
-| us-east-1 | `paws-region-useast1-globals-only` | Global-service necessities | ACM, CloudFront, WAF, S3, Shield, SNS, CloudWatch read, KMS decrypt |
+| us-east-1 | `paws-region-useast1-globals-only` | Global-service necessities | ACM, CloudFront, WAF, S3, Shield, SNS, CloudWatch read, CloudTrail event history, KMS decrypt + grant (ACM→CloudFront) |
 | ap-southeast-1 | `paws-region-apse1-cleanup-only` | Departing region (ex-Singapore sandbox) | List/Describe/Get + Delete/Terminate/Stop. No create, no invoke. |
 | us-west-2 | `paws-region-uswest2-bedrock-only` | Model availability (Stability AI Ultra, latest LLMs) | Bedrock, Mantle, minimal S3 for artifacts |
 | eu-north-1 | `paws-region-eunorth1-backup-bedrock` | Cross-region S3 backup + Bedrock | S3, KMS (replication), Bedrock, Mantle |

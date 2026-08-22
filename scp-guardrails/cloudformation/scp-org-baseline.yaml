@@ -117,7 +117,10 @@ Resources:
       Description: >
         Deny all regional actions outside the allowed-region list (exempt global
         services). Also restrict us-east-1 to CloudFront necessities only — no
-        general compute or storage.
+        general compute or storage. CloudTrail LookupEvents is allowed there
+        because global-service events are recorded only in us-east-1;
+        kms:CreateGrant because ACM grants CloudFront use of the aws/acm key
+        when a certificate is attached.
       TargetIds: !If
         - AttachToRoot
         - - !Ref OrgRootTargetId
@@ -162,6 +165,8 @@ Resources:
                   "cloudwatch:List*",
                   "cloudwatch:Describe*",
                   "logs:*",
+                  "cloudtrail:LookupEvents",
+                  "kms:CreateGrant",
                   "kms:Decrypt",
                   "kms:DescribeKey",
                   "kms:GenerateDataKey*",
