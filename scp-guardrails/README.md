@@ -101,7 +101,7 @@ listed is completely blocked. This is the primary deny layer.
 | Serverless | `apigateway`, `execute-api`, `events`, `scheduler`, `pipes`, `lambda`, `states`, `sns`, `sqs` | Pay-per-use foundation |
 | Compute | `ec2`, `ec2messages`, `autoscaling`, `application-autoscaling`, `ecs`, `ecr`, `ecr-public` | Size-limited by OU policy |
 | Storage | `s3`, `s3files`, `dynamodb` | S3 Files is the NFS path to S3 (no EFS needed) |
-| Analytics | `athena`, `glue` (catalog only) | Glue limited to Data Catalog operations |
+| Analytics | `athena`, `glue` (catalog only), `firehose` (one account only) | Glue limited to Data Catalog operations; Firehose exempted only for account 119998492877 (audit/backup pipeline), re-denied everywhere else |
 | Networking | `cloudfront`, `route53`, `route53domains` | No ELB, no TGW, no VPN |
 | Security | `acm`, `cognito-idp`, `guardduty`, `iam`, `kms`, `sso`, `sso-directory`, `sso-oauth`, `identitystore`, `sts` | KMS allowed but CreateKey denied at OU |
 | Monitoring | `cloudformation`, `cloudshell`, `cloudtrail`, `cloudwatch`, `logs`, `resource-explorer-2`, `servicequotas`, `ssm`, `ssmmessages`, `tag`, `uxc` | Resource Explorer for visibility |
@@ -114,7 +114,7 @@ listed is completely blocked. This is the primary deny layer.
 |---|---|---|
 | `elasticloadbalancing` (ALB/NLB) | $16+ | API Gateway + CloudFront |
 | `dax` (DynamoDB Accelerator) | $40+ | Not needed at home scale |
-| `kinesis`, `firehose`, `kinesisanalytics`, `kinesisvideo` | $11+/shard | SQS + EventBridge |
+| `kinesis`, `firehose` (except account 119998492877), `kinesisanalytics`, `kinesisvideo` | $11+/shard | SQS + EventBridge |
 | `rds` (all actions) | $15+ | DynamoDB |
 | `elasticfilesystem` (EFS) | $0.30/GB/mo | S3 Files (`s3files:*`) |
 | `apprunner` | $5+ even idle | Lambda + API GW |

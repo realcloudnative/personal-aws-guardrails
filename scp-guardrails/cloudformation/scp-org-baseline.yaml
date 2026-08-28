@@ -269,6 +269,10 @@ Resources:
               - dynamodb:*
               # --- Data & Analytics ---
               - athena:*
+              # firehose is allowed only for the audit/backup account; the
+              # DenyFirehoseOutsideExemptAccounts statement below re-denies it
+              # everywhere else.
+              - firehose:*
               - glue:GetDatabase
               - glue:GetDatabases
               - glue:GetTable
@@ -336,6 +340,16 @@ Resources:
               - tax:*
               - trustedadvisor:*
             Resource: "*"
+          # firehose:* is in the NotAction allowlist above solely so this
+          # per-account exemption can work: an org-root explicit deny cannot
+          # be overridden lower in the tree, so the exemption must live here.
+          - Sid: DenyFirehoseOutsideExemptAccounts
+            Effect: Deny
+            Action: firehose:*
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:PrincipalAccount: "119998492877"
           - Sid: DenyMarketplaceSubscribeOutsideBedrockMantle
             Effect: Deny
             Action: aws-marketplace:Subscribe
