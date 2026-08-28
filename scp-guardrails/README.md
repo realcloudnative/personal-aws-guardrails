@@ -2,8 +2,10 @@
 
 Layered Service Control Policies (SCPs) for a personal AWS Organization. Two
 functional layers: universally sensible guards at the org root, and one
-opinionated cost guard at the OU level. All policies are deployed **detached
-by default** and require explicit attachment.
+opinionated cost guard at the OU level. All policies start **detached on
+first deploy** and require explicit attachment; after that, redeploys retain
+the existing attachments unless a change is explicitly requested and
+confirmed.
 
 See the [root README](../README.md#design-philosophy-guardrails-for-the-agentic-age)
 for the high-level philosophy, tenets, and layered defense model.
@@ -196,7 +198,7 @@ Prerequisites: AWS CLI v2, management account, and either the LandingZoneAdmin
 SSO profile or a management-account IAM user signed in with `aws login` (that
 user needs the `SignInLocalDevelopmentAccess` managed policy).
 
-Deploy detached (review policies before attaching):
+First deploy (detached — review policies before attaching):
 ```bash
 cd scp-guardrails
 ./deploy.sh
@@ -209,13 +211,18 @@ Deploy attached:
   --opinionated-targets ou-abcd-11111111,ou-abcd-22222222
 ```
 
-The script verifies caller identity, validates all inputs, shows the attachment
-plan, and requires typing ATTACH for confirmation. Running with no target
-arguments detaches all policies (fast rollback).
+The script verifies caller identity, validates all inputs, reads the deployed
+stacks' current attachment parameters, and shows the attachment plan. Omitted
+target options **retain the current attachments** — a plain `./deploy.sh`
+rolls out template changes without touching attachments, so an agent or
+operator who forgets the target flags cannot detach anything by accident.
+Changing attachments requires explicit flags plus typed confirmation: ATTACH
+for new attachments, DETACH (with an explicit `NONE`) for removals.
 
 ## Rollback
 
-Rerun `./deploy.sh` with no target arguments. The management account is exempt
+Rerun `./deploy.sh --org-root-id NONE --opinionated-targets NONE` and confirm
+with DETACH. The management account is exempt
 from SCPs and can always detach directly via Organizations if CloudFormation
 cannot complete.
 

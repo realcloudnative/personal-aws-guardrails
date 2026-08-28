@@ -14,34 +14,42 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORG_BASELINE_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-org-baseline.yaml"
 OU_POLICIES_TEMPLATE="$SCRIPT_DIR/cloudformation/scp-ou-policies.yaml"
 
-ORG_ROOT_ID="NONE"
+# Empty means "retain the deployed stack's current value" (NONE on first deploy).
+# Detaching always requires an explicit NONE plus the DETACH confirmation below.
+ORG_ROOT_ID=""
 ALLOWED_REGIONS="us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1"
-OPINIONATED_COST_TARGETS="NONE"
+OPINIONATED_COST_TARGETS=""
 
 usage() {
   cat <<'USAGE'
 Usage: ./deploy.sh [options]
 
-No target options creates or updates both stacks with all policies detached.
+Omitted target options RETAIN the deployed stack's current attachments
+(NONE on a first deploy). Detaching therefore never happens by omission:
+pass NONE explicitly, and confirm it.
 
 Org-root stack options:
-  --org-root-id ID                Organization root ID (r-XXXX) for baseline policies
+  --org-root-id ID|NONE           Organization root ID (r-XXXX) for baseline policies,
+                                  or NONE to detach (requires DETACH confirmation)
   --allowed-regions CSV           Allowed regions (default: us-east-1,us-west-2,eu-central-1,eu-north-1,ap-southeast-1)
 
 OU-level stack options:
-  --opinionated-targets CSV       OU IDs for the opinionated cost guard
+  --opinionated-targets CSV|NONE  OU IDs for the opinionated cost guard,
+                                  or NONE to detach (requires DETACH confirmation)
 
 General:
   -h, --help                      Show this help
 
 Examples:
-  ./deploy.sh
+  ./deploy.sh                     # template changes only; attachments retained
   ./deploy.sh --org-root-id r-a1b2
-  ./deploy.sh --org-root-id r-a1b2 \
-    --opinionated-targets ou-abcd-11111111,ou-abcd-22222222
+  ./deploy.sh --opinionated-targets ou-abcd-11111111,ou-abcd-22222222
+  ./deploy.sh --opinionated-targets NONE   # deliberate detach
 
-Any attachment requires typing ATTACH at the prompt. For intentional
-non-interactive use, set ATTACH_CONFIRMATION=ATTACH.
+A NEW attachment requires typing ATTACH at the prompt; a DETACH requires
+typing DETACH. For intentional non-interactive use, set
+ATTACH_CONFIRMATION=ATTACH and/or DETACH_CONFIRMATION=DETACH. Retained
+(unchanged) attachments need no confirmation.
 USAGE
 }
 
@@ -72,7 +80,7 @@ done
 
 validate_org_root_id() {
   local id="$1"
-  [[ "$id" == "NONE" ]] && return 0
+  [[ -z "$id" || "$id" == "NONE" ]] && return 0
   if [[ ! "$id" =~ ^r-[a-z0-9]{4,32}$ ]]; then
     echo "Error: invalid org root ID '$id'; expected format r-XXXX (e.g., r-a1b2)." >&2
     exit 2
@@ -81,7 +89,7 @@ validate_org_root_id() {
 
 validate_ou_targets() {
   local label="$1" csv="$2" target
-  [[ "$csv" == "NONE" ]] && return 0
+  [[ -z "$csv" || "$csv" == "NONE" ]] && return 0
   IFS=',' read -r -a targets <<< "$csv"
   for target in "${targets[@]}"; do
     if [[ ! "$target" =~ ^ou-[a-z0-9]{4,32}-[a-z0-9]{8,32}$ ]]; then
@@ -135,33 +143,81 @@ if [[ "$CALLER_ACCOUNT" != "$MANAGEMENT_ACCOUNT" ]]; then
 fi
 echo "Verified Organizations management account: $MANAGEMENT_ACCOUNT"
 
+# Read a deployed stack's current parameter value; empty if the stack does
+# not exist yet. Guards against accidental detachment: omitted CLI options
+# fall back to these values, never to NONE.
+current_param() {
+  local stack="$1" key="$2" value
+  value="$(aws cloudformation describe-stacks \
+    --stack-name "$stack" --region "$REGION" \
+    --query "Stacks[0].Parameters[?ParameterKey=='$key'].ParameterValue | [0]" \
+    --output text 2>/dev/null)" || return 0
+  [[ "$value" == "None" ]] && value=""
+  printf '%s' "$value"
+}
+
+CURRENT_ORG_ROOT="$(current_param "$ORG_BASELINE_STACK" OrgRootTargetId)"
+CURRENT_OPINIONATED="$(current_param "$OU_POLICIES_STACK" OpinionatedCostGuardTargetIds)"
+
+ORG_ROOT_RETAINED=false
+OPINIONATED_RETAINED=false
+if [[ -z "$ORG_ROOT_ID" ]]; then
+  ORG_ROOT_ID="${CURRENT_ORG_ROOT:-NONE}"
+  ORG_ROOT_RETAINED=true
+fi
+if [[ -z "$OPINIONATED_COST_TARGETS" ]]; then
+  OPINIONATED_COST_TARGETS="${CURRENT_OPINIONATED:-NONE}"
+  OPINIONATED_RETAINED=true
+fi
+
+describe_plan() {
+  local new="$1" retained="$2"
+  if [[ "$retained" == true ]]; then printf '%s (retained)' "$new"; else printf '%s' "$new"; fi
+}
 printf '\nAttachment plan (NONE means detached):\n'
-printf '  Org-root baseline:       %s (regions: %s)\n' "$ORG_ROOT_ID" "$ALLOWED_REGIONS"
-printf '  Opinionated cost guard:  %s\n' "$OPINIONATED_COST_TARGETS"
+printf '  Org-root baseline:       %s (regions: %s)\n' "$(describe_plan "$ORG_ROOT_ID" "$ORG_ROOT_RETAINED")" "$ALLOWED_REGIONS"
+printf '  Opinionated cost guard:  %s\n' "$(describe_plan "$OPINIONATED_COST_TARGETS" "$OPINIONATED_RETAINED")"
 
-HAS_ATTACHMENTS=false
-for targets in "$ORG_ROOT_ID" "$OPINIONATED_COST_TARGETS"; do
-  if [[ "$targets" != "NONE" ]]; then
-    HAS_ATTACHMENTS=true
-    break
+# A change of attachment needs confirming; retained (unchanged) values do not.
+# New/changed targets require ATTACH; removing existing targets requires DETACH.
+NEEDS_ATTACH=false
+NEEDS_DETACH=false
+check_transition() {
+  local current="$1" new="$2" label="$3"
+  [[ "$new" == "${current:-NONE}" ]] && return 0
+  if [[ "$new" == "NONE" ]]; then
+    echo "WARNING: this deployment DETACHES the $label SCP (currently: ${current:-NONE})."
+    NEEDS_DETACH=true
+  else
+    NEEDS_ATTACH=true
   fi
-done
+}
+check_transition "$CURRENT_ORG_ROOT" "$ORG_ROOT_ID" "org-root baseline"
+check_transition "$CURRENT_OPINIONATED" "$OPINIONATED_COST_TARGETS" "opinionated cost guard"
 
-if [[ "$HAS_ATTACHMENTS" == true ]]; then
-  confirmation="${ATTACH_CONFIRMATION:-}"
-  if [[ "$confirmation" != "ATTACH" ]]; then
+require_confirmation() {
+  local word="$1" provided="$2" prompt="$3" confirmation
+  confirmation="$provided"
+  if [[ "$confirmation" != "$word" ]]; then
     if [[ ! -t 0 ]]; then
-      echo "Error: attachments require an interactive confirmation or ATTACH_CONFIRMATION=ATTACH." >&2
+      echo "Error: this change requires interactive confirmation or ${word}_CONFIRMATION=${word}." >&2
       exit 1
     fi
-    read -r -p "Type ATTACH to authorize these SCP attachments: " confirmation
+    read -r -p "$prompt" confirmation
   fi
-  if [[ "$confirmation" != "ATTACH" ]]; then
-    echo "Attachment not confirmed; nothing was deployed." >&2
+  if [[ "$confirmation" != "$word" ]]; then
+    echo "${word} not confirmed; nothing was deployed." >&2
     exit 1
   fi
-else
-  echo "Detached deployment: no SCP will be attached."
+}
+if [[ "$NEEDS_DETACH" == true ]]; then
+  require_confirmation DETACH "${DETACH_CONFIRMATION:-}" "Type DETACH to authorize removing these SCP attachments: "
+fi
+if [[ "$NEEDS_ATTACH" == true ]]; then
+  require_confirmation ATTACH "${ATTACH_CONFIRMATION:-}" "Type ATTACH to authorize these SCP attachments: "
+fi
+if [[ "$NEEDS_ATTACH" == false && "$NEEDS_DETACH" == false ]]; then
+  echo "Attachments unchanged; deploying template/content changes only."
 fi
 
 echo ""
