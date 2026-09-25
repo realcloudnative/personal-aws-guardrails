@@ -103,7 +103,7 @@ listed is completely blocked. This is the primary deny layer.
 | Serverless | `apigateway`, `execute-api`, `events`, `scheduler`, `pipes`, `lambda`, `states`, `sns`, `sqs` | Pay-per-use foundation |
 | Compute | `ec2`, `ec2messages`, `autoscaling`, `application-autoscaling`, `ecs`, `ecr`, `ecr-public` | Size-limited by OU policy |
 | Storage | `s3`, `s3files`, `dynamodb` | S3 Files is the NFS path to S3 (no EFS needed) |
-| Analytics | `athena`, `glue` (catalog only), `firehose` | Glue limited to Data Catalog operations |
+| Analytics | `athena`, `glue` (catalog only), `firehose` | Glue limited to Data Catalog operations (incl. table versions for Firehose Parquet/ORC conversion) |
 | Networking | `cloudfront`, `route53`, `route53domains` | No ELB, no TGW, no VPN |
 | Security | `acm`, `cognito-idp`, `guardduty`, `iam`, `kms`, `sso`, `sso-directory`, `sso-oauth`, `identitystore`, `sts` | KMS allowed but CreateKey denied at OU |
 | Monitoring | `cloudformation`, `cloudshell`, `cloudtrail`, `cloudwatch`, `logs`, `resource-explorer-2`, `servicequotas`, `ssm`, `ssmmessages`, `tag`, `uxc` | Resource Explorer for visibility |

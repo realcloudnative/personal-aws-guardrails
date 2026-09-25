@@ -274,6 +274,9 @@ Resources:
               - glue:GetDatabases
               - glue:GetTable
               - glue:GetTables
+              # Firehose reads table versions for Parquet/ORC conversion
+              - glue:GetTableVersion
+              - glue:GetTableVersions
               - glue:GetPartition
               - glue:GetPartitions
               - glue:BatchGetPartition
