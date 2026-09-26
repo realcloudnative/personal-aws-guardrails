@@ -109,6 +109,7 @@ listed is completely blocked. This is the primary deny layer.
 | Monitoring | `cloudformation`, `cloudshell`, `cloudtrail`, `cloudwatch`, `logs`, `resource-explorer-2`, `servicequotas`, `ssm`, `ssmmessages`, `tag`, `uxc` | Resource Explorer for visibility |
 | Developer | `codecommit` | Returned to GA Nov 2025 |
 | Billing | `account`, `artifact`, `aws-marketplace` (scoped), `aws-portal`, `bcm-data-exports`, `billing`, `budgets`, `ce`, `consolidatedbilling`, `cost-optimization-hub`, `cur`, `freetier`, `health`, `invoicing`, `organizations`, `payments`, `support`, `tax`, `trustedadvisor` | Management plane |
+| Console polish | `schemas` (Describe/Get/List only) | Read-only actions the console calls on page load for services that are otherwise denied; stops jarring SCP errors without allowing billable resources. Grows over time as errors surface |
 
 ### Services hard-denied (by omission)
 
@@ -126,7 +127,7 @@ listed is completely blocked. This is the primary deny layer.
 | `codebuild`, `codepipeline`, `codedeploy`, `codeartifact` | $1/pipeline/mo | GitHub Actions or local |
 | `cognito-identity`, `cognito-sync` | Legacy/unused | Cognito User Pools kept |
 | `s3-object-lambda` | Lambda per GET | Not needed |
-| `schemas` (EventBridge) | Discovery charges | Not needed |
+| `schemas` (EventBridge) | Discovery charges | Not needed (read-only kept for console polish) |
 | `cloudfront-keyvaluestore` | Not using | Not needed |
 | `route53resolver` | $90/mo per endpoint | Not needed |
 | `ram` | Free but unused | Not needed now |

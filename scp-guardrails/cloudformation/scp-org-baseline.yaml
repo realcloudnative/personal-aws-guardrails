@@ -339,6 +339,13 @@ Resources:
               - support:*
               - tax:*
               - trustedadvisor:*
+              # --- Console polish (read-only on otherwise-denied services) ---
+              # The console calls these on page load; without them it shows
+              # SCP "explicit deny" errors. Read/List/Describe only, never
+              # anything that creates a billable resource.
+              - schemas:Describe*
+              - schemas:Get*
+              - schemas:List*
             Resource: "*"
           - Sid: DenyMarketplaceSubscribeOutsideBedrockMantle
             Effect: Deny
